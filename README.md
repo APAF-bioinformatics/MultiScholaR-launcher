@@ -2,6 +2,21 @@
 
 A simple, cross-platform launcher for the MultiScholaR R package. Just double-click and go!
 
+## Prerequisites
+
+**⚠️ IMPORTANT: The following software must be installed before using the launcher:**
+
+- **R** (version 4.4.3 or later recommended)
+  - Download: [Windows](https://cran.r-project.org/bin/windows/base/) | [macOS](https://cran.r-project.org/bin/macosx/)
+  
+- **Git** (required for cloning/updating MultiScholaR)
+  - Download: [Windows](https://git-scm.com/download/win) | [macOS](https://git-scm.com/download/mac)
+  - macOS alternative: Install Xcode Command Line Tools via `xcode-select --install`
+  
+- **Pandoc** (required for report generation)
+  - Download: [Windows/macOS/Linux](https://pandoc.org/installing.html)
+  - macOS alternative: `brew install pandoc` (if using Homebrew)
+
 ## Features
 
 - **Zero Configuration**: Automatically detects R installation and sets up MultiScholaR
@@ -35,12 +50,12 @@ A simple, cross-platform launcher for the MultiScholaR R package. Just double-cl
 
 ## Requirements
 
+See [Prerequisites](#prerequisites) above for download links and installation instructions.
+
 - **R** (version 4.4.3 or later recommended)
 - **Git** (for cloning/updating MultiScholaR)
 - **Internet connection** (for initial installation and updates)
-
-Optional:
-- **Pandoc** (for report generation - will work without it, but reports won't generate)
+- **Pandoc** (for report generation - required)
 
 ## How It Works
 
