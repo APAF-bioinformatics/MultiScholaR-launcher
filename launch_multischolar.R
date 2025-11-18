@@ -57,6 +57,12 @@ cat("DEBUG: Platform:", R.version$platform, "\n")
 cat("DEBUG: Working directory:", getwd(), "\n")
 cat("DEBUG: Command line args:", paste(commandArgs(), collapse = " "), "\n")
 
+# Detect operating system
+is_windows <- .Platform$OS.type == "windows"
+os_name <- Sys.info()["sysname"]
+cat("DEBUG: Operating system:", os_name, "\n")
+cat("DEBUG: Is Windows:", is_windows, "\n")
+
 # --- 1. Test basic R functionality ---
 cat("\n=== DEBUG: Testing Basic R Functionality ===\n")
 tryCatch({
@@ -167,23 +173,297 @@ tryCatch({
   cat("DEBUG: ✗ ERROR with devtools:", e$message, "\n")
 })
 
-# --- 6. Test package loading with devtools ---
-cat("\n=== DEBUG: Testing Package Loading with devtools ===\n")
+# --- 6. Install dependencies needed to load package ---
+cat("\n=== DEBUG: Installing Dependencies to Load Package ===\n")
 if (requireNamespace("devtools", quietly = TRUE)) {
   tryCatch({
-    cat("DEBUG: Attempting to load package from:", package_dir, "\n")
-    devtools::load_all(package_dir, quiet = FALSE)
-    cat("DEBUG: ✓ Package loaded successfully with devtools\n")
+    # Install pacman (needed by loadDependencies function)
+    if (!requireNamespace("pacman", quietly = TRUE)) {
+      cat("DEBUG: Installing pacman...\n")
+      install.packages("pacman", repos = "https://cran.rstudio.com/")
+    }
+    
+    # Install BiocManager (needed for Bioconductor packages)
+    if (!requireNamespace("BiocManager", quietly = TRUE)) {
+      cat("DEBUG: Installing BiocManager...\n")
+      install.packages("BiocManager", repos = "https://cran.rstudio.com/")
+    }
+    
+    # Set up Bioconductor repositories
+    if (requireNamespace("BiocManager", quietly = TRUE)) {
+      bioc_repos <- BiocManager::repositories()
+      options(repos = bioc_repos)
+      cat("DEBUG: Bioconductor repositories configured\n")
+    }
+    
+    # CRITICAL: Update base Bioconductor packages FROM SOURCE before installing other deps
+    # This prevents version conflicts (e.g., S4Vectors 0.47.0 -> 0.48.0)
+    if (requireNamespace("BiocManager", quietly = TRUE)) {
+      if (is_windows) {
+        cat("DEBUG: Updating critical base Bioconductor packages from SOURCE first...\n")
+        cat("DEBUG: (Windows: forcing source to avoid outdated binaries)\n")
+      } else {
+        cat("DEBUG: Updating critical base Bioconductor packages...\n")
+        cat("DEBUG: (macOS: using BiocManager with update=TRUE - binaries are usually current)\n")
+      }
+      
+      # Helper function to clean lock files (Windows-only issue)
+      clean_lock_files <- function() {
+        if (!is_windows) {
+          return()  # Skip on macOS - lock files are a Windows issue
+        }
+        lib_path <- .libPaths()[1]
+        lock_dirs <- list.files(lib_path, pattern = "^00LOCK", full.names = TRUE)
+        if (length(lock_dirs) > 0) {
+          cat("DEBUG: Found", length(lock_dirs), "lock file(s), attempting to remove...\n")
+          for (lock_dir in lock_dirs) {
+            tryCatch({
+              unlink(lock_dir, recursive = TRUE, force = TRUE)
+              cat("DEBUG: Removed lock:", basename(lock_dir), "\n")
+            }, error = function(e) {
+              cat("DEBUG: Could not remove lock:", basename(lock_dir), "-", e$message, "\n")
+            })
+          }
+        }
+      }
+      
+      # Clean lock files first (Windows only)
+      clean_lock_files()
+      
+      # Platform-specific installation strategy
+      if (is_windows) {
+        # Windows: Force source installation to avoid outdated binaries
+        old_option <- getOption("install.packages.compile.from.source")
+        options(install.packages.compile.from.source = "always")
+        
+        # CRITICAL: Install S4Vectors from source FIRST (it's the root of many conflicts)
+        cat("DEBUG: Installing S4Vectors from source (this is critical)...\n")
+        clean_lock_files()  # Clean before each critical install
+        tryCatch({
+          install.packages("S4Vectors", repos = bioc_repos, type = "source", dependencies = TRUE)
+          cat("DEBUG: ✓ S4Vectors installed from source\n")
+        }, error = function(e) {
+          cat("DEBUG: ⚠ S4Vectors source install failed:", e$message, "\n")
+          cat("DEBUG: Will try binary as fallback...\n")
+          clean_lock_files()
+          BiocManager::install("S4Vectors", ask = FALSE, update = TRUE, dependencies = TRUE)
+        })
+        
+        # Then install other critical packages that depend on S4Vectors
+        critical_base_packages <- c(
+          "IRanges",        # Depends on S4Vectors
+          "Seqinfo",        # Needs updated S4Vectors
+          "GenomeInfoDb",   # Depends on Seqinfo
+          "KEGGREST",       # Needed by AnnotationDbi
+          "AnnotationDbi"   # Critical for many annotation packages
+        )
+        
+        cat("DEBUG: Installing other critical packages from source...\n")
+        for (pkg in critical_base_packages) {
+          clean_lock_files()  # Clean before each install
+          tryCatch({
+            install.packages(pkg, repos = bioc_repos, type = "source", dependencies = TRUE)
+            cat("DEBUG: ✓ Installed", pkg, "from source\n")
+          }, error = function(e) {
+            cat("DEBUG: ⚠ Failed to install", pkg, "from source:", e$message, "\n")
+            cat("DEBUG: Will try binary as fallback...\n")
+            clean_lock_files()
+            tryCatch({
+              BiocManager::install(pkg, ask = FALSE, update = TRUE, dependencies = TRUE)
+            }, error = function(e2) {
+              cat("DEBUG: ✗ Also failed binary install for", pkg, "\n")
+            })
+          })
+        }
+        
+        # Restore original option
+        options(install.packages.compile.from.source = old_option)
+      } else {
+        # macOS: Use BiocManager with update=TRUE (binaries are usually current)
+        critical_base_packages <- c(
+          "S4Vectors",      # Root of many conflicts
+          "IRanges",        # Depends on S4Vectors
+          "Seqinfo",        # Needs updated S4Vectors
+          "GenomeInfoDb",   # Depends on Seqinfo
+          "KEGGREST",       # Needed by AnnotationDbi
+          "AnnotationDbi"   # Critical for many annotation packages
+        )
+        
+        cat("DEBUG: Installing critical packages using BiocManager (macOS binaries are current)...\n")
+        BiocManager::install(critical_base_packages, ask = FALSE, update = TRUE, dependencies = TRUE)
+      }
+      
+      cat("DEBUG: ✓ Base Bioconductor packages updated\n")
+    }
+    
+    # Install dependencies from DESCRIPTION file (Imports and Depends)
+    # This should be enough to load the package
+    cat("DEBUG: Installing package dependencies from DESCRIPTION file...\n")
+    cat("DEBUG: This installs Imports/Depends needed to load the package\n")
+    devtools::install_deps(package_dir, dependencies = c("Depends", "Imports"), upgrade = "never", quiet = FALSE)
+    
+    cat("DEBUG: ✓ Dependencies from DESCRIPTION installed\n")
+    cat("DEBUG: (Additional dependencies will be installed via loadDependencies() after package loads)\n")
   }, error = function(e) {
-    cat("DEBUG: ✗ ERROR loading package with devtools:", e$message, "\n")
-    cat("DEBUG: Error details:\n")
-    print(e)
+    cat("DEBUG: ✗ WARNING installing dependencies:", e$message, "\n")
+    cat("DEBUG: Will attempt to continue anyway...\n")
   })
+} else {
+  cat("DEBUG: Cannot install dependencies - devtools not available\n")
+}
+
+# --- 7. Test package loading with devtools ---
+cat("\n=== DEBUG: Testing Package Loading with devtools ===\n")
+if (requireNamespace("devtools", quietly = TRUE)) {
+  # Helper function to clean lock files (Windows-only issue)
+  clean_lock_files <- function() {
+    if (!is_windows) {
+      return()  # Skip on macOS - lock files are a Windows issue
+    }
+    lib_path <- .libPaths()[1]
+    lock_dirs <- list.files(lib_path, pattern = "^00LOCK", full.names = TRUE)
+    if (length(lock_dirs) > 0) {
+      cat("DEBUG: Found", length(lock_dirs), "lock file(s), attempting to remove...\n")
+      for (lock_dir in lock_dirs) {
+        tryCatch({
+          unlink(lock_dir, recursive = TRUE, force = TRUE)
+          cat("DEBUG: Removed lock:", basename(lock_dir), "\n")
+        }, error = function(e) {
+          cat("DEBUG: Could not remove lock:", basename(lock_dir), "-", e$message, "\n")
+        })
+      }
+    }
+  }
+  
+  package_loaded <- FALSE
+  max_retries <- 2
+  retry_count <- 0
+  
+  while (!package_loaded && retry_count < max_retries) {
+    # Clean lock files before each retry (Windows only)
+    clean_lock_files()
+    tryCatch({
+      cat("DEBUG: Attempting to load package from:", package_dir, "\n")
+      devtools::load_all(package_dir, quiet = FALSE)
+      cat("DEBUG: ✓ Package loaded successfully with devtools\n")
+      package_loaded <- TRUE
+    }, error = function(e) {
+      error_msg <- as.character(e$message)
+      cat("DEBUG: ✗ ERROR loading package with devtools:", error_msg, "\n")
+      
+      # Check for version conflict errors
+      if (grepl("is being loaded, but.*is required", error_msg, ignore.case = TRUE) ||
+          grepl("version.*is required", error_msg, ignore.case = TRUE)) {
+        cat("DEBUG: ⚠ VERSION CONFLICT detected - existing package version is too old\n")
+        cat("DEBUG: This requires updating existing packages (will be handled by BiocManager with update=TRUE)\n")
+        
+        # Extract package names from version conflict message
+        # Pattern: "namespace 'PackageName' X.Y.Z is being loaded, but >= A.B.C is required"
+        pkg_version_match <- regmatches(error_msg, regexpr("'[^']+'", error_msg))
+        if (length(pkg_version_match) > 0) {
+          conflict_pkg <- gsub("'", "", pkg_version_match[1])
+          cat("DEBUG: Package with version conflict:", conflict_pkg, "\n")
+          cat("DEBUG: Attempting to update", conflict_pkg, "and dependencies...\n")
+          
+          if (requireNamespace("BiocManager", quietly = TRUE)) {
+            tryCatch({
+              clean_lock_files()  # Clean before install
+              BiocManager::install(conflict_pkg, ask = FALSE, update = TRUE, dependencies = TRUE)
+              cat("DEBUG: ✓ Updated", conflict_pkg, "and dependencies\n")
+            }, error = function(e2) {
+              cat("DEBUG: ✗ Failed to update", conflict_pkg, ":", e2$message, "\n")
+            })
+          }
+        }
+      }
+      # Check if error is about a missing package
+      else if (grepl("there is no package called", error_msg, ignore.case = TRUE)) {
+        # Extract package name from error message
+        pkg_match <- regmatches(error_msg, regexpr("'[^']+'", error_msg))
+        if (length(pkg_match) > 0) {
+          missing_pkg <- gsub("'", "", pkg_match[1])
+          cat("DEBUG: Detected MISSING package:", missing_pkg, "\n")
+          cat("DEBUG: Attempting to install missing package...\n")
+          
+          # Try to install from Bioconductor first (many annotation packages are there)
+          if (requireNamespace("BiocManager", quietly = TRUE)) {
+            tryCatch({
+              cat("DEBUG: Installing", missing_pkg, "with dependencies and allowing updates...\n")
+              clean_lock_files()  # Clean before install
+              BiocManager::install(missing_pkg, ask = FALSE, update = TRUE, dependencies = TRUE)
+              cat("DEBUG: ✓ Installed", missing_pkg, "from Bioconductor\n")
+            }, error = function(e2) {
+              # If Bioconductor fails, try CRAN
+              cat("DEBUG: Bioconductor install failed:", e2$message, "\n")
+              cat("DEBUG: Trying CRAN...\n")
+              tryCatch({
+                clean_lock_files()  # Clean before install
+                install.packages(missing_pkg, repos = "https://cran.rstudio.com/", dependencies = TRUE)
+                cat("DEBUG: ✓ Installed", missing_pkg, "from CRAN\n")
+              }, error = function(e3) {
+                cat("DEBUG: ✗ Failed to install", missing_pkg, "from both sources\n")
+                cat("DEBUG: CRAN error:", e3$message, "\n")
+              })
+            })
+          } else {
+            # No BiocManager, just try CRAN
+            tryCatch({
+              clean_lock_files()  # Clean before install
+              install.packages(missing_pkg, repos = "https://cran.rstudio.com/", dependencies = TRUE)
+              cat("DEBUG: ✓ Installed", missing_pkg, "from CRAN\n")
+            }, error = function(e3) {
+              cat("DEBUG: ✗ Failed to install", missing_pkg, "\n")
+              cat("DEBUG: Error:", e3$message, "\n")
+            })
+          }
+        }
+      } else {
+        cat("DEBUG: Other error type detected\n")
+        cat("DEBUG: Error details:\n")
+        print(e)
+      }
+    })
+    retry_count <- retry_count + 1
+  }
+  
+  if (!package_loaded) {
+    cat("DEBUG: WARNING: Package failed to load after", max_retries, "attempts\n")
+    cat("DEBUG: Attempting fallback: installing critical Bioconductor dependencies...\n")
+    
+    # Fallback: Install critical Bioconductor packages that are commonly needed
+    if (requireNamespace("BiocManager", quietly = TRUE)) {
+      tryCatch({
+        cat("DEBUG: Installing critical Bioconductor packages (GO.db, AnnotationDbi) with updates...\n")
+        cat("DEBUG: This will update existing packages if needed (e.g., S4Vectors)\n")
+        
+        # Install GO.db and AnnotationDbi with all dependencies and updates
+        critical_packages <- c("GO.db", "AnnotationDbi")
+        BiocManager::install(critical_packages, ask = FALSE, update = TRUE, dependencies = TRUE)
+        
+        cat("DEBUG: ✓ Critical Bioconductor packages installed/updated\n")
+        cat("DEBUG: Retrying package load...\n")
+        
+        # Try loading one more time
+        tryCatch({
+          devtools::load_all(package_dir, quiet = FALSE)
+          cat("DEBUG: ✓ Package loaded successfully after fallback installation\n")
+          package_loaded <- TRUE
+        }, error = function(e3) {
+          cat("DEBUG: ✗ Package still failed to load after fallback:", e3$message, "\n")
+        })
+      }, error = function(e2) {
+        cat("DEBUG: ✗ Fallback installation failed:", e2$message, "\n")
+        cat("DEBUG: Package may require manual dependency resolution\n")
+      })
+    } else {
+      cat("DEBUG: Cannot perform fallback - BiocManager not available\n")
+    }
+  }
 } else {
   cat("DEBUG: Cannot test package loading - devtools not available\n")
 }
 
-# --- 7. Test function availability ---
+# --- 8. Test function availability ---
 cat("\n=== DEBUG: Testing Function Availability ===\n")
 functions_to_check <- c("loadDependencies", "setupDirectories", "RunApplet", "MultiScholaRapp")
 for (func in functions_to_check) {
@@ -198,22 +478,43 @@ for (func in functions_to_check) {
   }
 }
 
-# --- 8. Test dependency loading ---
-cat("\n=== DEBUG: Testing Dependency Loading ===\n")
+# --- 9. Install all dependencies via loadDependencies() ---
+cat("\n=== DEBUG: Installing All Dependencies via loadDependencies() ===\n")
+cat("DEBUG: This will install all CRAN, Bioconductor, and GitHub packages required by MultiScholaR\n")
+cat("DEBUG: This may take several minutes on first run...\n")
+cat("DEBUG: Note: Base Bioconductor packages were already updated in step 6\n")
+
 if (exists("loadDependencies", envir = .GlobalEnv)) {
   tryCatch({
-    cat("DEBUG: Calling loadDependencies...\n")
-    loadDependencies()
+    cat("DEBUG: Calling loadDependencies(verbose = TRUE)...\n")
+    cat("DEBUG: Note: loadDependencies() uses update=FALSE, so base packages should already be updated\n")
+    loadDependencies(verbose = TRUE)
     cat("DEBUG: ✓ loadDependencies completed successfully\n")
+    cat("DEBUG: All dependencies should now be installed and loaded\n")
+    
+    # Ensure MultiScholaR package is still loaded after dependency installation
+    if (requireNamespace("devtools", quietly = TRUE)) {
+      cat("DEBUG: Reloading MultiScholaR package to ensure all dependencies are available...\n")
+      tryCatch({
+        devtools::load_all(package_dir, quiet = FALSE)
+        cat("DEBUG: ✓ Package reloaded successfully\n")
+      }, error = function(e2) {
+        cat("DEBUG: WARNING: Package reload failed:", e2$message, "\n")
+        cat("DEBUG: Continuing anyway - dependencies should be available\n")
+      })
+    }
   }, error = function(e) {
     cat("DEBUG: ✗ ERROR in loadDependencies:", e$message, "\n")
+    cat("DEBUG: Error details:\n")
     print(e)
+    cat("DEBUG: WARNING: Some dependencies may not be installed. The app may not work correctly.\n")
   })
 } else {
-  cat("DEBUG: loadDependencies function not available\n")
+  cat("DEBUG: ✗ loadDependencies function not available\n")
+  cat("DEBUG: Package may not have loaded successfully. Check errors above.\n")
 }
 
-# --- 9. Test app launching ---
+# --- 10. Test app launching ---
 cat("\n=== DEBUG: Testing App Launch ===\n")
 if (exists("MultiScholaRapp", envir = .GlobalEnv)) {
   tryCatch({
@@ -234,7 +535,7 @@ if (exists("MultiScholaRapp", envir = .GlobalEnv)) {
   }
 }
 
-# --- 10. Final status ---
+# --- 11. Final status ---
 cat("\n=== DEBUG: Final Status ===\n")
 cat("DEBUG: Script completed without fatal errors\n")
 cat("DEBUG: R session will now exit\n")

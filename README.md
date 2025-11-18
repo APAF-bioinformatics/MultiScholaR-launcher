@@ -16,6 +16,11 @@ A simple, cross-platform launcher for the MultiScholaR R package. Just double-cl
 - **Pandoc** (required for report generation)
   - Download: [Windows/macOS/Linux](https://pandoc.org/installing.html)
   - macOS alternative: `brew install pandoc` (if using Homebrew)
+  
+- **Rtools** (Windows only - required for compiling R packages from source)
+  - Download: [Rtools for Windows](https://cran.r-project.org/bin/windows/Rtools/)
+  - **CRITICAL**: Rtools is required on Windows for installing Bioconductor packages from source
+  - After installation, ensure Rtools is added to your PATH (the installer should do this automatically)
 
 ## Features
 
@@ -56,6 +61,7 @@ See [Prerequisites](#prerequisites) above for download links and installation in
 - **Git** (for cloning/updating MultiScholaR)
 - **Internet connection** (for initial installation and updates)
 - **Pandoc** (for report generation - required)
+- **Rtools** (Windows only - required for compiling R packages from source)
 
 ## How It Works
 
@@ -90,6 +96,13 @@ If R is not automatically detected:
 
 - **Windows**: Download from [git-scm.com](https://git-scm.com/download/win)
 - **macOS**: Install Xcode Command Line Tools: `xcode-select --install`
+
+### Rtools Not Found (Windows)
+
+If you get errors about 'make' not found when installing packages:
+- **Windows**: Download and install [Rtools](https://cran.r-project.org/bin/windows/Rtools/)
+- After installation, restart R/RStudio and verify Rtools is in your PATH
+- You can check by running `Sys.which("make")` in R - it should return a path to make.exe
 
 ### Permission Denied (macOS)
 
