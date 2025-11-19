@@ -196,116 +196,107 @@ if (requireNamespace("devtools", quietly = TRUE)) {
       cat("DEBUG: Bioconductor repositories configured\n")
     }
     
-    # CRITICAL: Update base Bioconductor packages FROM SOURCE before installing other deps
-    # This prevents version conflicts (e.g., S4Vectors 0.47.0 -> 0.48.0)
-    if (requireNamespace("BiocManager", quietly = TRUE)) {
-      if (is_windows) {
-        cat("DEBUG: Updating critical base Bioconductor packages from SOURCE first...\n")
-        cat("DEBUG: (Windows: forcing source to avoid outdated binaries)\n")
-      } else {
-        cat("DEBUG: Updating critical base Bioconductor packages...\n")
-        cat("DEBUG: (macOS: using BiocManager with update=TRUE - binaries are usually current)\n")
-      }
+    # --- Pre-check: Attempt to load the package ---
+    skip_dependency_install <- FALSE
+    cat("DEBUG: Pre-checking if package loads successfully...\n")
+    
+    tryCatch({
+      devtools::load_all(package_dir, quiet = FALSE)
+      cat("DEBUG: ✓ Package loaded successfully. No dependency installation needed.\n")
+      skip_dependency_install <- TRUE
+    }, error = function(e) {
+      cat("DEBUG: Package did not load. Analyzing error...\n")
+      print(e)
+      error_msg <- conditionMessage(e)
       
-      # Helper function to clean lock files (Windows-only issue)
-      clean_lock_files <- function() {
-        if (!is_windows) {
-          return()  # Skip on macOS - lock files are a Windows issue
+      # Check if it's a missing package error
+      # Devtools error: ! The package "pkgname" is required.
+      # Base R error: there is no package called 'pkgname'
+      is_devtools_missing_pkg <- grepl("package \".+\" is required", error_msg, ignore.case = TRUE)
+      is_base_missing_pkg <- grepl("there is no package called", error_msg, ignore.case = TRUE)
+      
+      if (is_devtools_missing_pkg || is_base_missing_pkg) {
+        # Extract the missing package name
+        missing_pkg <- NULL
+        if (is_base_missing_pkg) {
+          pkg_match <- regmatches(error_msg, regexpr("'[^']+'", error_msg))
+          if (length(pkg_match) > 0) missing_pkg <- gsub("'", "", pkg_match[1])
+        } else {
+          pkg_match <- regmatches(error_msg, regexpr('"([^"]+)"', error_msg))
+          if (length(pkg_match) > 0) missing_pkg <- gsub('"', "", pkg_match[1])
         }
-        lib_path <- .libPaths()[1]
-        lock_dirs <- list.files(lib_path, pattern = "^00LOCK", full.names = TRUE)
-        if (length(lock_dirs) > 0) {
-          cat("DEBUG: Found", length(lock_dirs), "lock file(s), attempting to remove...\n")
-          for (lock_dir in lock_dirs) {
+        
+        if (!is.null(missing_pkg)) {
+          cat("DEBUG: Missing package identified:", missing_pkg, "\n")
+          cat("DEBUG: Installing ONLY this package (update=FALSE to avoid touching other packages)...\n")
+          
+          # Helper to clean lock files on Windows
+          clean_lock_files <- function() {
+            if (!is_windows) return()
+            lib_path <- .libPaths()[1]
+            lock_dirs <- list.files(lib_path, pattern = "^00LOCK", full.names = TRUE)
+            if (length(lock_dirs) > 0) {
+              cat("DEBUG: Cleaning", length(lock_dirs), "lock file(s)...\n")
+              for (lock_dir in lock_dirs) {
+                tryCatch(unlink(lock_dir, recursive = TRUE, force = TRUE), error = function(e) {})
+              }
+            }
+          }
+          
+          # Clean lock files first
+          clean_lock_files()
+          
+          install_success <- FALSE
+          tryCatch({
+            # CRITICAL: Use update=FALSE to prevent BiocManager from updating other packages
+            # Try source first (BiocManager default)
+            BiocManager::install(missing_pkg, ask = FALSE, update = FALSE, dependencies = TRUE)
+            install_success <- TRUE
+            cat("DEBUG: ✓ Installed", missing_pkg, "\n")
+          }, error = function(e_install) {
+            cat("DEBUG: ✗ Installation failed (likely source compilation issue):", e_install$message, "\n")
+            
+            # Fallback: Force binary installation on Windows
+            if (is_windows) {
+              cat("DEBUG: Attempting binary installation as fallback...\n")
+              clean_lock_files()
+              tryCatch({
+                install.packages(missing_pkg, repos = bioc_repos, type = "binary", dependencies = TRUE)
+                install_success <<- TRUE
+                cat("DEBUG: ✓ Installed", missing_pkg, "from binary\n")
+              }, error = function(e_binary) {
+                cat("DEBUG: ✗ Binary installation also failed:", e_binary$message, "\n")
+              })
+            }
+          })
+          
+          if (install_success) {
+            cat("DEBUG: Retrying package load...\n")
             tryCatch({
-              unlink(lock_dir, recursive = TRUE, force = TRUE)
-              cat("DEBUG: Removed lock:", basename(lock_dir), "\n")
-            }, error = function(e) {
-              cat("DEBUG: Could not remove lock:", basename(lock_dir), "-", e$message, "\n")
+              devtools::load_all(package_dir, quiet = FALSE)
+              cat("DEBUG: ✓ Package loaded successfully after installing missing dependency.\n")
+              skip_dependency_install <<- TRUE
+            }, error = function(e2) {
+              cat("DEBUG: ✗ Package still failed to load. Will use fallback installation.\n")
+              print(e2)
             })
+          } else {
+            cat("DEBUG: Could not install", missing_pkg, ". Will use fallback installation.\n")
           }
         }
-      }
-      
-      # Clean lock files first (Windows only)
-      clean_lock_files()
-      
-      # Platform-specific installation strategy
-      if (is_windows) {
-        # Windows: Force source installation to avoid outdated binaries
-        old_option <- getOption("install.packages.compile.from.source")
-        options(install.packages.compile.from.source = "always")
-        
-        # CRITICAL: Install S4Vectors from source FIRST (it's the root of many conflicts)
-        cat("DEBUG: Installing S4Vectors from source (this is critical)...\n")
-        clean_lock_files()  # Clean before each critical install
-        tryCatch({
-          install.packages("S4Vectors", repos = bioc_repos, type = "source", dependencies = TRUE)
-          cat("DEBUG: ✓ S4Vectors installed from source\n")
-        }, error = function(e) {
-          cat("DEBUG: ⚠ S4Vectors source install failed:", e$message, "\n")
-          cat("DEBUG: Will try binary as fallback...\n")
-          clean_lock_files()
-          BiocManager::install("S4Vectors", ask = FALSE, update = TRUE, dependencies = TRUE)
-        })
-        
-        # Then install other critical packages that depend on S4Vectors
-        critical_base_packages <- c(
-          "IRanges",        # Depends on S4Vectors
-          "Seqinfo",        # Needs updated S4Vectors
-          "GenomeInfoDb",   # Depends on Seqinfo
-          "KEGGREST",       # Needed by AnnotationDbi
-          "AnnotationDbi"   # Critical for many annotation packages
-        )
-        
-        cat("DEBUG: Installing other critical packages from source...\n")
-        for (pkg in critical_base_packages) {
-          clean_lock_files()  # Clean before each install
-          tryCatch({
-            install.packages(pkg, repos = bioc_repos, type = "source", dependencies = TRUE)
-            cat("DEBUG: ✓ Installed", pkg, "from source\n")
-          }, error = function(e) {
-            cat("DEBUG: ⚠ Failed to install", pkg, "from source:", e$message, "\n")
-            cat("DEBUG: Will try binary as fallback...\n")
-            clean_lock_files()
-            tryCatch({
-              BiocManager::install(pkg, ask = FALSE, update = TRUE, dependencies = TRUE)
-            }, error = function(e2) {
-              cat("DEBUG: ✗ Also failed binary install for", pkg, "\n")
-            })
-          })
-        }
-        
-        # Restore original option
-        options(install.packages.compile.from.source = old_option)
       } else {
-        # macOS: Use BiocManager with update=TRUE (binaries are usually current)
-        critical_base_packages <- c(
-          "S4Vectors",      # Root of many conflicts
-          "IRanges",        # Depends on S4Vectors
-          "Seqinfo",        # Needs updated S4Vectors
-          "GenomeInfoDb",   # Depends on Seqinfo
-          "KEGGREST",       # Needed by AnnotationDbi
-          "AnnotationDbi"   # Critical for many annotation packages
-        )
-        
-        cat("DEBUG: Installing critical packages using BiocManager (macOS binaries are current)...\n")
-        BiocManager::install(critical_base_packages, ask = FALSE, update = TRUE, dependencies = TRUE)
+        cat("DEBUG: Error is not a simple missing package. Will use fallback installation.\n")
       }
-      
-      cat("DEBUG: ✓ Base Bioconductor packages updated\n")
+    })
+    
+    # Fallback: If package still didn't load, install dependencies from DESCRIPTION
+    if (!skip_dependency_install) {
+      cat("DEBUG: Using fallback: Installing dependencies from DESCRIPTION file...\n")
+      devtools::install_deps(package_dir, dependencies = c("Depends", "Imports"), upgrade = "never", quiet = FALSE)
+      cat("DEBUG: ✓ Fallback dependency installation completed\n")
     }
-    
-    # Install dependencies from DESCRIPTION file (Imports and Depends)
-    # This should be enough to load the package
-    cat("DEBUG: Installing package dependencies from DESCRIPTION file...\n")
-    cat("DEBUG: This installs Imports/Depends needed to load the package\n")
-    devtools::install_deps(package_dir, dependencies = c("Depends", "Imports"), upgrade = "never", quiet = FALSE)
-    
-    cat("DEBUG: ✓ Dependencies from DESCRIPTION installed\n")
-    cat("DEBUG: (Additional dependencies will be installed via loadDependencies() after package loads)\n")
   }, error = function(e) {
-    cat("DEBUG: ✗ WARNING installing dependencies:", e$message, "\n")
+    cat("DEBUG: ✗ WARNING in dependency installation:", e$message, "\n")
     cat("DEBUG: Will attempt to continue anyway...\n")
   })
 } else {
