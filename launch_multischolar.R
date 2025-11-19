@@ -196,98 +196,108 @@ if (requireNamespace("devtools", quietly = TRUE)) {
       cat("DEBUG: Bioconductor repositories configured\n")
     }
     
-    # --- Pre-check: Attempt to load the package ---
+    # --- Pre-check: Attempt to load the package, installing missing deps one by one ---
     skip_dependency_install <- FALSE
     cat("DEBUG: Pre-checking if package loads successfully...\n")
     
-    tryCatch({
-      devtools::load_all(package_dir, quiet = FALSE)
-      cat("DEBUG: ✓ Package loaded successfully. No dependency installation needed.\n")
-      skip_dependency_install <- TRUE
-    }, error = function(e) {
-      cat("DEBUG: Package did not load. Analyzing error...\n")
-      print(e)
-      error_msg <- conditionMessage(e)
+    # Helper to clean lock files on Windows
+    clean_lock_files <- function() {
+      if (!is_windows) return()
+      lib_path <- .libPaths()[1]
+      lock_dirs <- list.files(lib_path, pattern = "^00LOCK", full.names = TRUE)
+      if (length(lock_dirs) > 0) {
+        cat("DEBUG: Cleaning", length(lock_dirs), "lock file(s)...\n")
+        for (lock_dir in lock_dirs) {
+          tryCatch(unlink(lock_dir, recursive = TRUE, force = TRUE), error = function(e) {})
+        }
+      }
+    }
+    
+    # Try loading up to 20 times (to handle chains of missing packages)
+    max_attempts <- 20
+    for (attempt in 1:max_attempts) {
+      load_result <- tryCatch({
+        devtools::load_all(package_dir, quiet = FALSE)
+        "success"
+      }, error = function(e) {
+        list(error = e, msg = conditionMessage(e))
+      })
+      
+      if (identical(load_result, "success")) {
+        cat("DEBUG: ✓ Package loaded successfully after", attempt, "attempt(s).\n")
+        skip_dependency_install <- TRUE
+        break
+      }
+      
+      # Package didn't load - analyze the error
+      error_msg <- load_result$msg
+      cat("DEBUG: Attempt", attempt, "failed. Analyzing error...\n")
+      print(load_result$error)
       
       # Check if it's a missing package error
-      # Devtools error: ! The package "pkgname" is required.
-      # Base R error: there is no package called 'pkgname'
       is_devtools_missing_pkg <- grepl("package \".+\" is required", error_msg, ignore.case = TRUE)
       is_base_missing_pkg <- grepl("there is no package called", error_msg, ignore.case = TRUE)
       
-      if (is_devtools_missing_pkg || is_base_missing_pkg) {
-        # Extract the missing package name
-        missing_pkg <- NULL
-        if (is_base_missing_pkg) {
-          pkg_match <- regmatches(error_msg, regexpr("'[^']+'", error_msg))
-          if (length(pkg_match) > 0) missing_pkg <- gsub("'", "", pkg_match[1])
-        } else {
-          pkg_match <- regmatches(error_msg, regexpr('"([^"]+)"', error_msg))
-          if (length(pkg_match) > 0) missing_pkg <- gsub('"', "", pkg_match[1])
-        }
-        
-        if (!is.null(missing_pkg)) {
-          cat("DEBUG: Missing package identified:", missing_pkg, "\n")
-          cat("DEBUG: Installing ONLY this package (update=FALSE to avoid touching other packages)...\n")
-          
-          # Helper to clean lock files on Windows
-          clean_lock_files <- function() {
-            if (!is_windows) return()
-            lib_path <- .libPaths()[1]
-            lock_dirs <- list.files(lib_path, pattern = "^00LOCK", full.names = TRUE)
-            if (length(lock_dirs) > 0) {
-              cat("DEBUG: Cleaning", length(lock_dirs), "lock file(s)...\n")
-              for (lock_dir in lock_dirs) {
-                tryCatch(unlink(lock_dir, recursive = TRUE, force = TRUE), error = function(e) {})
-              }
-            }
-          }
-          
-          # Clean lock files first
-          clean_lock_files()
-          
-          install_success <- FALSE
-          tryCatch({
-            # CRITICAL: Use update=FALSE to prevent BiocManager from updating other packages
-            # Try source first (BiocManager default)
-            BiocManager::install(missing_pkg, ask = FALSE, update = FALSE, dependencies = TRUE)
-            install_success <- TRUE
-            cat("DEBUG: ✓ Installed", missing_pkg, "\n")
-          }, error = function(e_install) {
-            cat("DEBUG: ✗ Installation failed (likely source compilation issue):", e_install$message, "\n")
-            
-            # Fallback: Force binary installation on Windows
-            if (is_windows) {
-              cat("DEBUG: Attempting binary installation as fallback...\n")
-              clean_lock_files()
-              tryCatch({
-                install.packages(missing_pkg, repos = bioc_repos, type = "binary", dependencies = TRUE)
-                install_success <<- TRUE
-                cat("DEBUG: ✓ Installed", missing_pkg, "from binary\n")
-              }, error = function(e_binary) {
-                cat("DEBUG: ✗ Binary installation also failed:", e_binary$message, "\n")
-              })
-            }
-          })
-          
-          if (install_success) {
-            cat("DEBUG: Retrying package load...\n")
-            tryCatch({
-              devtools::load_all(package_dir, quiet = FALSE)
-              cat("DEBUG: ✓ Package loaded successfully after installing missing dependency.\n")
-              skip_dependency_install <<- TRUE
-            }, error = function(e2) {
-              cat("DEBUG: ✗ Package still failed to load. Will use fallback installation.\n")
-              print(e2)
-            })
-          } else {
-            cat("DEBUG: Could not install", missing_pkg, ". Will use fallback installation.\n")
-          }
-        }
-      } else {
+      if (!is_devtools_missing_pkg && !is_base_missing_pkg) {
         cat("DEBUG: Error is not a simple missing package. Will use fallback installation.\n")
+        break
       }
-    })
+      
+      # Extract the missing package name
+      missing_pkg <- NULL
+      if (is_base_missing_pkg) {
+        pkg_match <- regmatches(error_msg, regexpr("'[^']+'", error_msg))
+        if (length(pkg_match) > 0) missing_pkg <- gsub("'", "", pkg_match[1])
+      } else {
+        pkg_match <- regmatches(error_msg, regexpr('"([^"]+)"', error_msg))
+        if (length(pkg_match) > 0) missing_pkg <- gsub('"', "", pkg_match[1])
+      }
+      
+      if (is.null(missing_pkg)) {
+        cat("DEBUG: Could not extract package name from error. Will use fallback installation.\n")
+        break
+      }
+      
+      cat("DEBUG: Missing package identified:", missing_pkg, "\n")
+      cat("DEBUG: Installing ONLY this package (update=FALSE to avoid touching other packages)...\n")
+      
+      # Clean lock files first
+      clean_lock_files()
+      
+      install_success <- FALSE
+      tryCatch({
+        # CRITICAL: Use update=FALSE to prevent BiocManager from updating other packages
+        BiocManager::install(missing_pkg, ask = FALSE, update = FALSE, dependencies = TRUE)
+        install_success <- TRUE
+        cat("DEBUG: ✓ Installed", missing_pkg, "\n")
+      }, error = function(e_install) {
+        cat("DEBUG: ✗ Installation failed (likely source compilation issue):", e_install$message, "\n")
+        
+        # Fallback: Force binary installation on Windows
+        if (is_windows) {
+          cat("DEBUG: Attempting binary installation as fallback...\n")
+          clean_lock_files()
+          tryCatch({
+            install.packages(missing_pkg, repos = bioc_repos, type = "binary", dependencies = TRUE)
+            install_success <<- TRUE
+            cat("DEBUG: ✓ Installed", missing_pkg, "from binary\n")
+          }, error = function(e_binary) {
+            cat("DEBUG: ✗ Binary installation also failed:", e_binary$message, "\n")
+          })
+        }
+      })
+      
+      if (!install_success) {
+        cat("DEBUG: Could not install", missing_pkg, ". Will use fallback installation.\n")
+        break
+      }
+      
+      # Continue loop to try loading again with the newly installed package
+    }
+    
+    if (!skip_dependency_install && attempt >= max_attempts) {
+      cat("DEBUG: Reached maximum attempts (", max_attempts, "). Will use fallback installation.\n")
+    }
     
     # Fallback: If package still didn't load, install dependencies from DESCRIPTION
     if (!skip_dependency_install) {
@@ -303,155 +313,25 @@ if (requireNamespace("devtools", quietly = TRUE)) {
   cat("DEBUG: Cannot install dependencies - devtools not available\n")
 }
 
-# --- 7. Test package loading with devtools ---
-cat("\n=== DEBUG: Testing Package Loading with devtools ===\n")
+# --- 7. Verify package loading ---
+cat("\n=== DEBUG: Verifying Package Loading ===\n")
 if (requireNamespace("devtools", quietly = TRUE)) {
-  # Helper function to clean lock files (Windows-only issue)
-  clean_lock_files <- function() {
-    if (!is_windows) {
-      return()  # Skip on macOS - lock files are a Windows issue
-    }
-    lib_path <- .libPaths()[1]
-    lock_dirs <- list.files(lib_path, pattern = "^00LOCK", full.names = TRUE)
-    if (length(lock_dirs) > 0) {
-      cat("DEBUG: Found", length(lock_dirs), "lock file(s), attempting to remove...\n")
-      for (lock_dir in lock_dirs) {
-        tryCatch({
-          unlink(lock_dir, recursive = TRUE, force = TRUE)
-          cat("DEBUG: Removed lock:", basename(lock_dir), "\n")
-        }, error = function(e) {
-          cat("DEBUG: Could not remove lock:", basename(lock_dir), "-", e$message, "\n")
-        })
-      }
-    }
-  }
-  
-  package_loaded <- FALSE
-  max_retries <- 2
-  retry_count <- 0
-  
-  while (!package_loaded && retry_count < max_retries) {
-    # Clean lock files before each retry (Windows only)
-    clean_lock_files()
+  if (!skip_dependency_install) {
+    # Step 6 didn't succeed, so we need to try loading after the fallback installation
+    cat("DEBUG: Attempting to load package after fallback installation...\n")
     tryCatch({
-      cat("DEBUG: Attempting to load package from:", package_dir, "\n")
       devtools::load_all(package_dir, quiet = FALSE)
-      cat("DEBUG: ✓ Package loaded successfully with devtools\n")
-      package_loaded <- TRUE
+      cat("DEBUG: ✓ Package loaded successfully after fallback\n")
     }, error = function(e) {
-      error_msg <- as.character(e$message)
-      cat("DEBUG: ✗ ERROR loading package with devtools:", error_msg, "\n")
-      
-      # Check for version conflict errors
-      if (grepl("is being loaded, but.*is required", error_msg, ignore.case = TRUE) ||
-          grepl("version.*is required", error_msg, ignore.case = TRUE)) {
-        cat("DEBUG: ⚠ VERSION CONFLICT detected - existing package version is too old\n")
-        cat("DEBUG: This requires updating existing packages (will be handled by BiocManager with update=TRUE)\n")
-        
-        # Extract package names from version conflict message
-        # Pattern: "namespace 'PackageName' X.Y.Z is being loaded, but >= A.B.C is required"
-        pkg_version_match <- regmatches(error_msg, regexpr("'[^']+'", error_msg))
-        if (length(pkg_version_match) > 0) {
-          conflict_pkg <- gsub("'", "", pkg_version_match[1])
-          cat("DEBUG: Package with version conflict:", conflict_pkg, "\n")
-          cat("DEBUG: Attempting to update", conflict_pkg, "and dependencies...\n")
-          
-          if (requireNamespace("BiocManager", quietly = TRUE)) {
-            tryCatch({
-              clean_lock_files()  # Clean before install
-              BiocManager::install(conflict_pkg, ask = FALSE, update = TRUE, dependencies = TRUE)
-              cat("DEBUG: ✓ Updated", conflict_pkg, "and dependencies\n")
-            }, error = function(e2) {
-              cat("DEBUG: ✗ Failed to update", conflict_pkg, ":", e2$message, "\n")
-            })
-          }
-        }
-      }
-      # Check if error is about a missing package
-      else if (grepl("there is no package called", error_msg, ignore.case = TRUE)) {
-        # Extract package name from error message
-        pkg_match <- regmatches(error_msg, regexpr("'[^']+'", error_msg))
-        if (length(pkg_match) > 0) {
-          missing_pkg <- gsub("'", "", pkg_match[1])
-          cat("DEBUG: Detected MISSING package:", missing_pkg, "\n")
-          cat("DEBUG: Attempting to install missing package...\n")
-          
-          # Try to install from Bioconductor first (many annotation packages are there)
-          if (requireNamespace("BiocManager", quietly = TRUE)) {
-            tryCatch({
-              cat("DEBUG: Installing", missing_pkg, "with dependencies and allowing updates...\n")
-              clean_lock_files()  # Clean before install
-              BiocManager::install(missing_pkg, ask = FALSE, update = TRUE, dependencies = TRUE)
-              cat("DEBUG: ✓ Installed", missing_pkg, "from Bioconductor\n")
-            }, error = function(e2) {
-              # If Bioconductor fails, try CRAN
-              cat("DEBUG: Bioconductor install failed:", e2$message, "\n")
-              cat("DEBUG: Trying CRAN...\n")
-              tryCatch({
-                clean_lock_files()  # Clean before install
-                install.packages(missing_pkg, repos = "https://cran.rstudio.com/", dependencies = TRUE)
-                cat("DEBUG: ✓ Installed", missing_pkg, "from CRAN\n")
-              }, error = function(e3) {
-                cat("DEBUG: ✗ Failed to install", missing_pkg, "from both sources\n")
-                cat("DEBUG: CRAN error:", e3$message, "\n")
-              })
-            })
-          } else {
-            # No BiocManager, just try CRAN
-            tryCatch({
-              clean_lock_files()  # Clean before install
-              install.packages(missing_pkg, repos = "https://cran.rstudio.com/", dependencies = TRUE)
-              cat("DEBUG: ✓ Installed", missing_pkg, "from CRAN\n")
-            }, error = function(e3) {
-              cat("DEBUG: ✗ Failed to install", missing_pkg, "\n")
-              cat("DEBUG: Error:", e3$message, "\n")
-            })
-          }
-        }
-      } else {
-        cat("DEBUG: Other error type detected\n")
-        cat("DEBUG: Error details:\n")
-        print(e)
-      }
+      cat("DEBUG: ✗ ERROR: Package still failed to load after all attempts\n")
+      cat("DEBUG: Error:", conditionMessage(e), "\n")
+      cat("DEBUG: The package may require manual dependency resolution\n")
     })
-    retry_count <- retry_count + 1
-  }
-  
-  if (!package_loaded) {
-    cat("DEBUG: WARNING: Package failed to load after", max_retries, "attempts\n")
-    cat("DEBUG: Attempting fallback: installing critical Bioconductor dependencies...\n")
-    
-    # Fallback: Install critical Bioconductor packages that are commonly needed
-    if (requireNamespace("BiocManager", quietly = TRUE)) {
-      tryCatch({
-        cat("DEBUG: Installing critical Bioconductor packages (GO.db, AnnotationDbi) with updates...\n")
-        cat("DEBUG: This will update existing packages if needed (e.g., S4Vectors)\n")
-        
-        # Install GO.db and AnnotationDbi with all dependencies and updates
-        critical_packages <- c("GO.db", "AnnotationDbi")
-        BiocManager::install(critical_packages, ask = FALSE, update = TRUE, dependencies = TRUE)
-        
-        cat("DEBUG: ✓ Critical Bioconductor packages installed/updated\n")
-        cat("DEBUG: Retrying package load...\n")
-        
-        # Try loading one more time
-        tryCatch({
-          devtools::load_all(package_dir, quiet = FALSE)
-          cat("DEBUG: ✓ Package loaded successfully after fallback installation\n")
-          package_loaded <- TRUE
-        }, error = function(e3) {
-          cat("DEBUG: ✗ Package still failed to load after fallback:", e3$message, "\n")
-        })
-      }, error = function(e2) {
-        cat("DEBUG: ✗ Fallback installation failed:", e2$message, "\n")
-        cat("DEBUG: Package may require manual dependency resolution\n")
-      })
-    } else {
-      cat("DEBUG: Cannot perform fallback - BiocManager not available\n")
-    }
+  } else {
+    cat("DEBUG: ✓ Package already loaded successfully in Step 6\n")
   }
 } else {
-  cat("DEBUG: Cannot test package loading - devtools not available\n")
+  cat("DEBUG: Cannot verify package loading - devtools not available\n")
 }
 
 # --- 8. Test function availability ---
