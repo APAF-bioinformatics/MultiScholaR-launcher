@@ -212,9 +212,116 @@ if (requireNamespace("devtools", quietly = TRUE)) {
     # If package didn't load, install all dependencies from DESCRIPTION
     if (!skip_dependency_install) {
       cat("DEBUG: Installing all dependencies from DESCRIPTION file...\n")
-      cat("DEBUG: Using upgrade='never' to avoid updating existing packages\n")
-      devtools::install_deps(package_dir, dependencies = c("Depends", "Imports"), upgrade = "never", quiet = FALSE)
-      cat("DEBUG: ✓ Dependency installation completed\n")
+      cat("DEBUG: First attempt: Using upgrade='never' to avoid updating existing packages\n")
+      
+      # First attempt: try without upgrades
+      tryCatch({
+        devtools::install_deps(package_dir, dependencies = c("Depends", "Imports"), upgrade = "never", quiet = FALSE)
+        cat("DEBUG: ✓ Initial dependency installation completed\n")
+      }, error = function(e) {
+        cat("DEBUG: ✗ Initial installation attempt failed:", e$message, "\n")
+      })
+      
+      # Try loading after initial installation to detect version conflicts
+      cat("DEBUG: Testing package load after initial installation...\n")
+      load_success <- FALSE
+      version_conflict_detected <- FALSE
+      missing_package_detected <- FALSE
+      load_error_msg <- ""
+      conflicting_packages <- character()
+      
+      tryCatch({
+        devtools::load_all(package_dir, quiet = FALSE)
+        cat("DEBUG: ✓ Package loaded successfully after initial installation\n")
+        load_success <- TRUE
+      }, error = function(e) {
+        load_error_msg <- conditionMessage(e)
+        cat("DEBUG: Package still failed to load. Error:", load_error_msg, "\n")
+        
+        # Enhanced error parsing to extract package information
+        # Pattern 1: "namespace 'PackageName' X.Y.Z is already loaded, but >= A.B.C is required"
+        if (grepl("namespace '[^']+' [^ ]+ is already loaded, but >= [^ ]+ is required", load_error_msg)) {
+          version_conflict_detected <- TRUE
+          
+          # Extract package name and versions
+          pkg_match <- regmatches(load_error_msg, regexpr("namespace '([^']+)' ([^ ]+) is already loaded, but >= ([^ ]+) is required", load_error_msg))
+          if (length(pkg_match) > 0) {
+            pkg_name <- sub("namespace '([^']+)' .*", "\\1", pkg_match[1])
+            current_ver <- sub("namespace '[^']+' ([^ ]+) is already loaded.*", "\\1", pkg_match[1])
+            required_ver <- sub(".*but >= ([^ ]+) is required", "\\1", pkg_match[1])
+            conflicting_packages <- c(conflicting_packages, pkg_name)
+            cat("DEBUG: ⚠ Version conflict detected!\n")
+            cat("DEBUG:   Package:", pkg_name, "\n")
+            cat("DEBUG:   Current version:", current_ver, "\n")
+            cat("DEBUG:   Required version: >=", required_ver, "\n")
+            cat("DEBUG:   Action: Will retry with package upgrades.\n")
+          } else {
+            # Fallback: just extract package name
+            pkg_match <- regmatches(load_error_msg, regexpr("namespace '([^']+)'", load_error_msg))
+            if (length(pkg_match) > 0) {
+              pkg_name <- sub("namespace '([^']+)'.*", "\\1", pkg_match[1])
+              conflicting_packages <- c(conflicting_packages, pkg_name)
+              cat("DEBUG: ⚠ Version conflict detected for package:", pkg_name, "\n")
+              cat("DEBUG:   Action: Will retry with package upgrades.\n")
+            }
+          }
+        }
+        # Pattern 2: "The package \"PackageName\" is required" (missing package)
+        else if (grepl("The package [\"']([^\"']+)[\"'] is required", load_error_msg)) {
+          missing_package_detected <- TRUE
+          pkg_match <- regmatches(load_error_msg, regexpr("The package [\"']([^\"']+)[\"'] is required", load_error_msg))
+          if (length(pkg_match) > 0) {
+            pkg_name <- sub("The package [\"']([^\"']+)[\"'].*", "\\1", pkg_match[1])
+            conflicting_packages <- c(conflicting_packages, pkg_name)
+            cat("DEBUG: ⚠ Missing package detected:", pkg_name, "\n")
+            cat("DEBUG:   Action: Will retry with package upgrades to force installation.\n")
+            version_conflict_detected <- TRUE  # Treat missing packages as needing upgrade retry
+          }
+        }
+        # Pattern 3: Generic version requirement error
+        else if (grepl("is already loaded, but >= .* is required", load_error_msg)) {
+          version_conflict_detected <- TRUE
+          cat("DEBUG: ⚠ Version conflict detected (generic pattern)!\n")
+          cat("DEBUG:   Action: Will retry with package upgrades.\n")
+        }
+      })
+      
+      # If version conflict detected, retry with upgrades
+      if (!load_success && version_conflict_detected) {
+        if (length(conflicting_packages) > 0) {
+          cat("DEBUG: Retrying dependency installation with upgrade='always' to resolve conflicts...\n")
+          cat("DEBUG: Affected packages:", paste(conflicting_packages, collapse = ", "), "\n")
+        } else {
+          cat("DEBUG: Retrying dependency installation with upgrade='always' to resolve version conflicts...\n")
+        }
+        cat("DEBUG: This will upgrade packages to meet version requirements.\n")
+        
+        tryCatch({
+          devtools::install_deps(package_dir, dependencies = c("Depends", "Imports"), upgrade = "always", quiet = FALSE)
+          cat("DEBUG: ✓ Dependency installation with upgrades completed\n")
+          
+          # Try loading again after upgrade
+          cat("DEBUG: Testing package load after upgrade...\n")
+          tryCatch({
+            devtools::load_all(package_dir, quiet = FALSE)
+            cat("DEBUG: ✓ Package loaded successfully after upgrade\n")
+            load_success <- TRUE
+            skip_dependency_install <- TRUE  # Mark as successful so step 7 doesn't retry
+          }, error = function(e2) {
+            error_msg2 <- conditionMessage(e2)
+            cat("DEBUG: ✗ Package still failed to load after upgrade.\n")
+            cat("DEBUG: Error:", error_msg2, "\n")
+            cat("DEBUG: This may indicate a deeper dependency issue that requires manual resolution.\n")
+          })
+        }, error = function(e) {
+          cat("DEBUG: ✗ Retry with upgrades failed during installation.\n")
+          cat("DEBUG: Error:", e$message, "\n")
+          cat("DEBUG: You may need to manually install or upgrade the conflicting packages.\n")
+        })
+      } else if (!load_success && !version_conflict_detected) {
+        cat("DEBUG: ⚠ Package loading failed, but no version conflicts detected.\n")
+        cat("DEBUG: Error type may be different. Will attempt again in verification step.\n")
+      }
     }
   }, error = function(e) {
     cat("DEBUG: ✗ WARNING in dependency installation:", e$message, "\n")
@@ -229,14 +336,39 @@ cat("\n=== DEBUG: Verifying Package Loading ===\n")
 if (requireNamespace("devtools", quietly = TRUE)) {
   if (!skip_dependency_install) {
     # Step 6 didn't succeed, so we need to try loading after the fallback installation
-    cat("DEBUG: Attempting to load package after fallback installation...\n")
+    cat("DEBUG: Attempting to load package after dependency installation...\n")
+    cat("DEBUG: Note: If this fails, the package may require manual dependency resolution\n")
     tryCatch({
       devtools::load_all(package_dir, quiet = FALSE)
-      cat("DEBUG: ✓ Package loaded successfully after fallback\n")
+      cat("DEBUG: ✓ Package loaded successfully after dependency installation\n")
+      skip_dependency_install <- TRUE  # Mark as successful
     }, error = function(e) {
-      cat("DEBUG: ✗ ERROR: Package still failed to load after all attempts\n")
-      cat("DEBUG: Error:", conditionMessage(e), "\n")
-      cat("DEBUG: The package may require manual dependency resolution\n")
+      error_msg <- conditionMessage(e)
+      cat("DEBUG: ✗ ERROR: Package still failed to load after all installation attempts\n")
+      cat("DEBUG: Error message:", error_msg, "\n")
+      cat("DEBUG: \n")
+      cat("DEBUG: Troubleshooting suggestions:\n")
+      cat("DEBUG: 1. Check if all required packages are listed in DESCRIPTION file\n")
+      cat("DEBUG: 2. Verify that Bioconductor packages are properly configured\n")
+      cat("DEBUG: 3. Try manually installing missing packages:\n")
+      
+      # Try to extract package name from error for helpful suggestion
+      if (grepl("The package [\"']([^\"']+)[\"'] is required", error_msg)) {
+        pkg_match <- regmatches(error_msg, regexpr("The package [\"']([^\"']+)[\"'] is required", error_msg))
+        if (length(pkg_match) > 0) {
+          pkg_name <- sub("The package [\"']([^\"']+)[\"'].*", "\\1", pkg_match[1])
+          cat("DEBUG:    install.packages(\"", pkg_name, "\")\n", sep = "")
+        }
+      } else if (grepl("namespace '[^']+'", error_msg)) {
+        pkg_match <- regmatches(error_msg, regexpr("namespace '([^']+)'", error_msg))
+        if (length(pkg_match) > 0) {
+          pkg_name <- sub("namespace '([^']+)'.*", "\\1", pkg_match[1])
+          cat("DEBUG:    Package '", pkg_name, "' may need to be upgraded\n", sep = "")
+          cat("DEBUG:    Try: install.packages(\"", pkg_name, "\")\n", sep = "")
+        }
+      }
+      
+      cat("DEBUG: 4. The package may require manual dependency resolution\n")
     })
   } else {
     cat("DEBUG: ✓ Package already loaded successfully in Step 6\n")
