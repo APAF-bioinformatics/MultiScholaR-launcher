@@ -42,7 +42,7 @@ sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev libglpk-dev 
 4. Wait for installation (first run: 10-30 minutes)
 5. App launches automatically! 🚀
 
-### macOS / Linux
+### macOS
 
 1. Download or clone this repository
 2. Make executable (first time only):
@@ -51,6 +51,21 @@ sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev libglpk-dev 
    ```
 3. **Double-click** `Launch_MultiScholaR.command` (or run from terminal)
 4. Select version and wait for installation
+
+### Linux
+
+1. Download or clone this repository
+2. Make executable (first time only):
+   ```bash
+   chmod +x Launch_MultiScholaR.sh
+   ```
+3. **Double-click** `Launch_MultiScholaR.sh` or run from terminal:
+   ```bash
+   ./Launch_MultiScholaR.sh
+   ```
+4. Select version and wait for installation
+
+> **Note:** On Linux, first run may take 15-30 minutes due to package compilation. The launcher uses parallel compilation (`-j` flag) to speed this up.
 
 ## How It Works
 
@@ -109,7 +124,8 @@ Select option (1-4) or press Enter for default:
 | File | Purpose |
 |------|---------|
 | `Launch_MultiScholaR.bat` | Windows launcher (double-click) |
-| `Launch_MultiScholaR.command` | macOS/Linux launcher (double-click) |
+| `Launch_MultiScholaR.command` | macOS launcher (double-click) |
+| `Launch_MultiScholaR.sh` | Linux launcher (double-click or `./Launch_MultiScholaR.sh`) |
 | `launch_multischolar.R` | Core R script - handles installation & launch |
 | `MultiScholaR.ico` | Icon for Windows shortcuts |
 | `README.md` | This file |
