@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ========================================
-# MultiScholaR Launcher for Mac
+# MultiScholaR Launcher for Mac/Linux
 # ========================================
 
 # Get the directory where this script is located
@@ -16,6 +16,9 @@ echo ""
 # Default MultiScholaR installation path (Documents folder)
 DOCUMENTS_DIR="$HOME/Documents"
 MULTISCHOLAR_PATH="$DOCUMENTS_DIR/MultiScholaR"
+
+# Branch to use
+MULTISCHOLAR_BRANCH="v0.35.1"
 
 # Detect R installation
 echo "Detecting R installation..."
@@ -86,8 +89,8 @@ else
     # Clone the repository
     echo ""
     echo "Installing MultiScholaR..."
-    echo "Cloning repository to: $MULTISCHOLAR_PATH"
-    if ! git clone -b GUI https://github.com/APAF-bioinformatics/MultiScholaR.git "$MULTISCHOLAR_PATH"; then
+    echo "Cloning repository (branch: $MULTISCHOLAR_BRANCH) to: $MULTISCHOLAR_PATH"
+    if ! git clone -b "$MULTISCHOLAR_BRANCH" https://github.com/APAF-bioinformatics/MultiScholaR.git "$MULTISCHOLAR_PATH"; then
         echo "ERROR: Failed to clone repository."
         echo "Please check your internet connection and try again."
         read -p "Press Enter to exit..."
@@ -102,8 +105,12 @@ echo "========================================"
 echo "Updating MultiScholaR repository..."
 echo "========================================"
 cd "$MULTISCHOLAR_PATH"
-if git pull origin GUI 2>/dev/null; then
-    echo "Repository updated successfully."
+
+# Fetch and checkout the correct branch
+git fetch origin "$MULTISCHOLAR_BRANCH" 2>/dev/null
+git checkout "$MULTISCHOLAR_BRANCH" 2>/dev/null
+if git pull origin "$MULTISCHOLAR_BRANCH" 2>/dev/null; then
+    echo "Repository updated successfully (branch: $MULTISCHOLAR_BRANCH)."
 else
     echo ""
     echo "WARNING: Failed to update repository via git pull."
@@ -136,13 +143,60 @@ else
 fi
 echo ""
 
+# ========================================
+# Bootstrap Dependencies with Restart Loop
+# ========================================
+echo "========================================"
+echo "Bootstrapping Dependencies..."
+echo "========================================"
+echo ""
+
+MAX_RETRIES=3
+RETRY_COUNT=0
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if [ -f "$LAUNCHER_DIR/bootstrap_dependencies.R" ]; then
+        echo "Running dependency bootstrap (attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES)..."
+        "$RSCRIPT_PATH" "$LAUNCHER_DIR/bootstrap_dependencies.R" "$MULTISCHOLAR_PATH"
+        BOOTSTRAP_EXIT=$?
+        
+        if [ $BOOTSTRAP_EXIT -eq 0 ]; then
+            echo ""
+            echo "Dependencies satisfied!"
+            echo ""
+            break
+        elif [ $BOOTSTRAP_EXIT -eq 42 ]; then
+            echo ""
+            echo "Packages were installed/upgraded. Restarting R session..."
+            echo ""
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+        else
+            echo ""
+            echo "WARNING: Bootstrap script encountered an error (exit code: $BOOTSTRAP_EXIT)."
+            echo "Will attempt to launch anyway..."
+            echo ""
+            break
+        fi
+    else
+        echo "WARNING: bootstrap_dependencies.R not found."
+        echo "Skipping dependency bootstrap..."
+        echo ""
+        break
+    fi
+done
+
+if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+    echo "WARNING: Maximum bootstrap retries reached."
+    echo "Some dependencies may not be installed correctly."
+    echo ""
+fi
+
 # Launch R script
 echo "========================================"
 echo "Launching MultiScholaR..."
 echo "========================================"
 echo ""
 
-# Use the existing launch_multischolar.R script and pass the path as argument
 if [ -f "$LAUNCHER_DIR/launch_multischolar.R" ]; then
     "$RSCRIPT_PATH" "$LAUNCHER_DIR/launch_multischolar.R" "$MULTISCHOLAR_PATH"
     RSCRIPT_EXIT_CODE=$?

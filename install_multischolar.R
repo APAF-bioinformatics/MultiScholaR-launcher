@@ -208,9 +208,9 @@ main <- function() {
     cat("Updating existing installation...\n")
   } else {
     # Clone the repository
-    cat("\nCloning MultiScholaR repository (GUI branch)...\n")
+    cat("\nCloning MultiScholaR repository (v0.35.1 branch)...\n")
     repo_url <- "https://github.com/APAF-bioinformatics/MultiScholaR.git"
-    branch <- "GUI"
+    branch <- "v0.35.1"
     
     clone_cmd <- paste("git clone -b", branch, repo_url, shQuote(multischolar_path))
     cat("Running:", clone_cmd, "\n")

@@ -15,6 +15,9 @@ set "DOCUMENTS_DIR=%USERPROFILE%\Documents"
 if not exist "%DOCUMENTS_DIR%" set "DOCUMENTS_DIR=%HOMEDRIVE%%HOMEPATH%\Documents"
 set "MULTISCHOLAR_PATH=%DOCUMENTS_DIR%\MultiScholaR"
 
+REM Branch to use
+set "MULTISCHOLAR_BRANCH=v0.35.1"
+
 REM Detect R installation
 echo Detecting R installation...
 set "RSCRIPT_PATH="
@@ -110,8 +113,8 @@ if errorlevel 1 (
 REM Clone the repository
 echo.
 echo Installing MultiScholaR...
-echo Cloning repository to: !MULTISCHOLAR_PATH!
-git clone -b GUI https://github.com/APAF-bioinformatics/MultiScholaR.git "!MULTISCHOLAR_PATH!"
+echo Cloning repository (branch: %MULTISCHOLAR_BRANCH%) to: !MULTISCHOLAR_PATH!
+git clone -b %MULTISCHOLAR_BRANCH% https://github.com/APAF-bioinformatics/MultiScholaR.git "!MULTISCHOLAR_PATH!"
 if errorlevel 1 (
     echo ERROR: Failed to clone repository.
     echo Please check your internet connection and try again.
@@ -126,7 +129,11 @@ echo ========================================
 echo Updating MultiScholaR repository...
 echo ========================================
 cd /d "!MULTISCHOLAR_PATH!"
-git pull origin GUI 2>nul
+
+REM Fetch and checkout the correct branch
+git fetch origin %MULTISCHOLAR_BRANCH% 2>nul
+git checkout %MULTISCHOLAR_BRANCH% 2>nul
+git pull origin %MULTISCHOLAR_BRANCH% 2>nul
 if errorlevel 1 (
     echo.
     echo WARNING: Failed to update repository via git pull.
@@ -134,7 +141,7 @@ if errorlevel 1 (
     echo MultiScholaR will continue with the existing local version.
     echo.
 ) else (
-    echo Repository updated successfully.
+    echo Repository updated successfully (branch: %MULTISCHOLAR_BRANCH%).
 )
 echo.
 
@@ -163,13 +170,61 @@ if errorlevel 1 (
     echo.
 )
 
+REM ========================================
+REM Bootstrap Dependencies with Restart Loop
+REM ========================================
+echo ========================================
+echo Bootstrapping Dependencies...
+echo ========================================
+echo.
+
+set "MAX_RETRIES=3"
+set "RETRY_COUNT=0"
+
+:bootstrap_loop
+if %RETRY_COUNT% geq %MAX_RETRIES% (
+    echo ERROR: Maximum bootstrap retries reached.
+    echo Some dependencies may not be installed correctly.
+    echo.
+    goto :launch_app
+)
+
+if exist "%LAUNCHER_DIR%bootstrap_dependencies.R" (
+    echo Running dependency bootstrap (attempt %RETRY_COUNT% of %MAX_RETRIES%)...
+    "%RSCRIPT_PATH%" "%LAUNCHER_DIR%bootstrap_dependencies.R" "!MULTISCHOLAR_PATH!"
+    set BOOTSTRAP_EXIT=%ERRORLEVEL%
+    
+    if !BOOTSTRAP_EXIT! equ 0 (
+        echo.
+        echo Dependencies satisfied!
+        echo.
+        goto :launch_app
+    ) else if !BOOTSTRAP_EXIT! equ 42 (
+        echo.
+        echo Packages were installed/upgraded. Restarting R session...
+        echo.
+        set /a RETRY_COUNT+=1
+        goto :bootstrap_loop
+    ) else (
+        echo.
+        echo WARNING: Bootstrap script encountered an error (exit code: !BOOTSTRAP_EXIT!).
+        echo Will attempt to launch anyway...
+        echo.
+        goto :launch_app
+    )
+) else (
+    echo WARNING: bootstrap_dependencies.R not found.
+    echo Skipping dependency bootstrap...
+    echo.
+)
+
+:launch_app
 REM Launch R script
 echo ========================================
 echo Launching MultiScholaR...
 echo ========================================
 echo.
 
-REM Use the existing launch_multischolar.R script and pass the path as argument
 if exist "%LAUNCHER_DIR%launch_multischolar.R" (
     "%RSCRIPT_PATH%" "%LAUNCHER_DIR%launch_multischolar.R" "!MULTISCHOLAR_PATH!"
     set RSCRIPT_EXIT_CODE=%ERRORLEVEL%
