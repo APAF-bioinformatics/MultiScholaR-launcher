@@ -6,10 +6,11 @@
 # This script:
 # 1. Prompts for branch/version selection
 # 2. Installs pak (if needed)
-# 3. Installs/updates MultiScholaR from GitHub via pak
-# 4. Loads the package
-# 5. Runs loadDependencies() for Bioconductor/optional packages
-# 6. Launches the Shiny app
+# 3. On Linux: Pre-compiles heavy packages with parallel make
+# 4. Installs/updates MultiScholaR from GitHub via pak
+# 5. Loads the package
+# 6. Runs loadDependencies() for Bioconductor/optional packages
+# 7. Launches the Shiny app
 
 # Configuration
 MULTISCHOLAR_REPO <- "APAF-bioinformatics/MultiScholaR"
@@ -77,6 +78,45 @@ message("pak OK")
 message("")
 
 # ========================================
+# Step 2b: Linux - Pre-compile heavy packages with parallel make
+# ========================================
+is_linux <- Sys.info()["sysname"] == "Linux"
+
+if (is_linux) {
+  message("--- Step 2b: Linux detected - Pre-compiling heavy packages ---")
+  message("Using parallel compilation for faster builds...")
+  message("")
+  
+  # Get number of cores (leave 2 free for system)
+  n_cores <- max(1, parallel::detectCores() - 2)
+  message("Using ", n_cores, " CPU cores for compilation")
+  
+  # Set parallel make flags
+  Sys.setenv(MAKEFLAGS = paste0("-j", n_cores))
+  
+  # Heavy packages that take forever to compile on Linux
+  heavy_packages <- c("duckdb", "arrow")
+  
+  for (pkg in heavy_packages) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      message("  Compiling ", pkg, " (this may take 5-10 minutes)...")
+      tryCatch({
+        install.packages(pkg, repos = "https://cloud.r-project.org/", 
+                         quiet = FALSE, Ncpus = n_cores)
+        message("  ", pkg, " installed successfully!")
+      }, error = function(e) {
+        message("  WARNING: ", pkg, " failed to install: ", conditionMessage(e))
+        message("  Continuing anyway - ", pkg, " is optional.")
+      })
+    } else {
+      message("  ", pkg, " already installed, skipping.")
+    }
+  }
+  
+  message("")
+}
+
+# ========================================
 # Step 3: Install/update MultiScholaR
 # ========================================
 message("--- Step 3: Installing MultiScholaR ---")
@@ -112,6 +152,13 @@ message("")
 message("--- Step 5: Running loadDependencies() ---")
 message("Installing Bioconductor/optional packages...")
 message("")
+
+# Keep parallel make flags for Linux
+if (is_linux) {
+  n_cores <- max(1, parallel::detectCores() - 2)
+  Sys.setenv(MAKEFLAGS = paste0("-j", n_cores))
+  options(Ncpus = n_cores)
+}
 
 if (exists("loadDependencies")) {
   tryCatch({
