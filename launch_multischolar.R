@@ -14,7 +14,7 @@
 
 # Configuration
 MULTISCHOLAR_REPO <- "APAF-bioinformatics/MultiScholaR"
-DEFAULT_BRANCH <- "v0.35.1"
+DEFAULT_BRANCH <- "main"
 
 options(warn = 1)
 
@@ -31,32 +31,107 @@ message("")
 # ========================================
 message("--- Branch/Version Selection ---")
 message("")
-message("Available options:")
-message("  1. v0.35.1 (stable release) [DEFAULT]")
-message("  2. main (latest development)")
-message("  3. GUI (GUI development branch)")
-message("  4. Enter custom branch/tag")
-message("")
+
+# Try to fetch branches dynamically
+branches <- NULL
+use_dynamic_menu <- FALSE
 
 if (interactive()) {
-  cat("Select option (1-4) or press Enter for default: ")
-  choice <- readline()
-  choice <- trimws(choice)
+  # Try to get branches from git ls-remote
+  repo_url <- paste0("https://github.com/", MULTISCHOLAR_REPO, ".git")
   
-  if (choice == "" || choice == "1") {
-    selected_branch <- "v0.35.1"
-  } else if (choice == "2") {
-    selected_branch <- "main"
-  } else if (choice == "3") {
-    selected_branch <- "GUI"
-  } else if (choice == "4") {
-    cat("Enter branch/tag name: ")
-    selected_branch <- trimws(readline())
-    if (selected_branch == "") selected_branch <- DEFAULT_BRANCH
+  tryCatch({
+    result <- system2("git", c("ls-remote", "--heads", repo_url), 
+                     stdout = TRUE, stderr = TRUE, timeout = 10)
+    
+    if (length(result) > 0 && !any(grepl("error|fatal", result, ignore.case = TRUE))) {
+      # Parse branch names from git ls-remote output
+      # Format: <commit_hash>	refs/heads/branch_name
+      branch_lines <- result[grepl("refs/heads/", result)]
+      if (length(branch_lines) > 0) {
+        branches <- gsub("^[^\\t]+\\trefs/heads/", "", branch_lines)
+        branches <- sort(unique(branches))
+        
+        if (length(branches) > 0) {
+          use_dynamic_menu <- TRUE
+        }
+      }
+    }
+  }, error = function(e) {
+    # Silently fall back to hardcoded menu
+  })
+  
+  # Display menu and get user selection
+  if (use_dynamic_menu && length(branches) > 0) {
+    # Dynamic menu with all branches
+    message("Available branches:")
+    message("")
+    
+    # Find default branch index
+    default_idx <- which(branches == DEFAULT_BRANCH)
+    if (length(default_idx) == 0) default_idx <- 1
+    
+    # Display branches
+    for (i in seq_along(branches)) {
+      branch_display <- branches[i]
+      if (i == default_idx) {
+        branch_display <- paste0(branch_display, " [DEFAULT]")
+      }
+      message(sprintf("  %d. %s", i, branch_display))
+    }
+    message(sprintf("  %d. Enter custom branch/tag", length(branches) + 1))
+    message("")
+    
+    cat(sprintf("Select option (1-%d) or press Enter for default: ", length(branches) + 1))
+    choice <- readline()
+    choice <- trimws(choice)
+    
+    if (choice == "") {
+      # Default selection
+      selected_branch <- branches[default_idx]
+    } else {
+      choice_num <- suppressWarnings(as.integer(choice))
+      if (!is.na(choice_num) && choice_num >= 1 && choice_num <= length(branches)) {
+        selected_branch <- branches[choice_num]
+      } else if (!is.na(choice_num) && choice_num == length(branches) + 1) {
+        # Custom branch option
+        cat("Enter branch/tag name: ")
+        selected_branch <- trimws(readline())
+        if (selected_branch == "") selected_branch <- DEFAULT_BRANCH
+      } else {
+        # User typed a branch name directly
+        selected_branch <- choice
+      }
+    }
   } else {
-    selected_branch <- choice
+    # Fallback to hardcoded menu
+    message("Available options:")
+    message(sprintf("  1. %s (latest development) [DEFAULT]", DEFAULT_BRANCH))
+    message("  2. v0.35.1 (stable release)")
+    message("  3. GUI (GUI development branch)")
+    message("  4. Enter custom branch/tag")
+    message("")
+    
+    cat("Select option (1-4) or press Enter for default: ")
+    choice <- readline()
+    choice <- trimws(choice)
+    
+    if (choice == "" || choice == "1") {
+      selected_branch <- DEFAULT_BRANCH
+    } else if (choice == "2") {
+      selected_branch <- "v0.35.1"
+    } else if (choice == "3") {
+      selected_branch <- "GUI"
+    } else if (choice == "4") {
+      cat("Enter branch/tag name: ")
+      selected_branch <- trimws(readline())
+      if (selected_branch == "") selected_branch <- DEFAULT_BRANCH
+    } else {
+      selected_branch <- choice
+    }
   }
 } else {
+  # Non-interactive mode: use command-line arguments
   args <- commandArgs(trailingOnly = TRUE)
   selected_branch <- if (length(args) >= 1 && args[1] != "") args[1] else DEFAULT_BRANCH
 }

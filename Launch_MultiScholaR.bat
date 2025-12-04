@@ -173,6 +173,8 @@ echo packages are downloaded and installed.
 echo.
 echo Do not close this window.
 echo.
+echo Press any key to continue and select a branch...
+pause >nul
 
 REM Run the R launch script
 "!RSCRIPT_PATH!" "%LAUNCHER_DIR%launch_multischolar.R"
