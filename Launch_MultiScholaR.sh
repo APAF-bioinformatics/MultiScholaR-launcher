@@ -1,10 +1,14 @@
 #!/bin/bash
 # ========================================
-# MultiScholaR Launcher - Linux
+# MultiScholaR Launcher - Linux (Interactive)
 # ========================================
-# Double-click or run: ./Launch_MultiScholaR.sh
+# Run: ./Launch_MultiScholaR.sh
 
 set -e
+
+# Configuration
+REPO_URL="https://github.com/APAF-bioinformatics/MultiScholaR.git"
+DEFAULT_BRANCH="main"
 
 echo "========================================"
 echo "MultiScholaR Launcher"
@@ -15,15 +19,15 @@ echo ""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ========================================
+# 1. Check Prerequisites
+# ========================================
+echo "Checking prerequisites..."
+
 # Check for R
 if ! command -v Rscript &> /dev/null; then
     echo "[ERROR] R is not installed or not in PATH"
-    echo ""
-    echo "Please install R:"
-    echo "  Ubuntu/Debian: sudo apt-get install r-base r-base-dev"
-    echo "  Fedora: sudo dnf install R"
-    echo "  Or download from: https://cran.r-project.org/"
-    echo ""
+    echo "Please install R: sudo pacman -S r"
     read -p "Press Enter to exit..."
     exit 1
 fi
@@ -32,37 +36,121 @@ echo "[OK] R found: $(Rscript --version 2>&1 | head -1)"
 # Check for git
 if ! command -v git &> /dev/null; then
     echo "[ERROR] git is not installed"
-    echo ""
-    echo "Please install git:"
-    echo "  Ubuntu/Debian: sudo apt-get install git"
-    echo "  Fedora: sudo dnf install git"
-    echo ""
+    echo "Please install git: sudo pacman -S git"
     read -p "Press Enter to exit..."
     exit 1
 fi
-echo "[OK] git found: $(git --version)"
+echo "[OK] git found: $(git --version | head -1)"
 
-# Check for pandoc (optional but recommended)
+# Check for pandoc (optional)
 if command -v pandoc &> /dev/null; then
-    echo "[OK] pandoc found: $(pandoc --version | head -1)"
+    echo "[OK] pandoc found"
 else
-    echo "[WARN] pandoc not found (optional - needed for reports)"
-    echo "       Install with: sudo apt-get install pandoc"
+    echo "[WARN] pandoc not found (reports will fail)"
 fi
-
 echo ""
 
 # Set up R library path
 export R_LIBS_USER="${HOME}/R/library"
 mkdir -p "$R_LIBS_USER"
 
-# Run the R launcher script
-echo "Starting MultiScholaR..."
+# ========================================
+# 2. Branch Selection
+# ========================================
+echo "========================================"
+echo "Branch/Version Selection"
+echo "========================================"
 echo ""
 
-Rscript -e "source('launch_multischolar.R')" "$@"
+echo "Fetching available branches from GitHub..."
+echo ""
+
+# Fetch branches cleanly into an array
+# We use || true to prevent script crash if internet is down
+RAW_BRANCHES=$(git ls-remote --heads "$REPO_URL" 2>/dev/null || true)
+
+BRANCHES=()
+if [ -n "$RAW_BRANCHES" ]; then
+    # Parse output: remove 'refs/heads/' and sort alphabetically
+    mapfile -t BRANCHES < <(echo "$RAW_BRANCHES" | awk '{print $2}' | sed 's|refs/heads/||' | sort)
+fi
+
+SELECTED_BRANCH=""
+
+if [ ${#BRANCHES[@]} -gt 0 ]; then
+    echo "Available branches:"
+    
+    # Loop through array to display menu
+    i=0
+    for branch in "${BRANCHES[@]}"; do
+        i=$((i+1))
+        if [ "$branch" == "$DEFAULT_BRANCH" ]; then
+            echo "  $i. $branch [DEFAULT]"
+        else
+            echo "  $i. $branch"
+        fi
+    done
+    
+    # Add Custom option
+    CUSTOM_OPT=$((i+1))
+    echo "  $CUSTOM_OPT. Enter custom branch/tag"
+    echo ""
+    
+    read -p "Select option (1-$CUSTOM_OPT) or press Enter for default: " CHOICE
+    
+    # Logic to handle selection
+    if [ -z "$CHOICE" ]; then
+        SELECTED_BRANCH="$DEFAULT_BRANCH"
+    elif [ "$CHOICE" -eq "$CUSTOM_OPT" ] 2>/dev/null; then
+        read -p "Enter branch/tag name: " USER_INPUT
+        SELECTED_BRANCH="${USER_INPUT:-$DEFAULT_BRANCH}"
+    elif [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le "${#BRANCHES[@]}" ] 2>/dev/null; then
+        # Array index is choice-1
+        IDX=$((CHOICE-1))
+        SELECTED_BRANCH="${BRANCHES[$IDX]}"
+    else
+        # If they typed a name instead of a number, use it
+        SELECTED_BRANCH="$CHOICE"
+    fi
+
+else
+    # FALLBACK if git ls-remote failed (No internet/GitHub down)
+    echo "(!) Could not fetch branches. Using fallback menu."
+    echo ""
+    echo "  1. main (latest development) [DEFAULT]"
+    echo "  2. GUI (GUI development branch)"
+    echo "  3. Enter custom branch/tag"
+    echo ""
+    
+    read -p "Select option (1-3): " CHOICE
+    
+    case "$CHOICE" in
+        1|"") SELECTED_BRANCH="main" ;;
+        2)    SELECTED_BRANCH="GUI" ;;
+        3)    read -p "Enter branch name: " SELECTED_BRANCH ;;
+        *)    SELECTED_BRANCH="$CHOICE" ;;
+    esac
+fi
+
+# Final safety check
+if [ -z "$SELECTED_BRANCH" ]; then
+    SELECTED_BRANCH="$DEFAULT_BRANCH"
+fi
+
+echo ""
+echo "Selected branch: $SELECTED_BRANCH"
+echo ""
+
+# ========================================
+# 3. Launch Application
+# ========================================
+echo "Starting MultiScholaR..."
+echo "This may take a few minutes on first run."
+echo ""
+
+# Execute the R script directly, passing the branch as the first argument
+Rscript launch_multischolar.R "$SELECTED_BRANCH"
 
 echo ""
 echo "MultiScholaR session ended."
 read -p "Press Enter to close..."
-
