@@ -54,8 +54,7 @@ echo ""
 export R_LIBS_USER="${HOME}/R/library"
 mkdir -p "$R_LIBS_USER"
 
-# FIX: Tell R to use the system default browser
-export R_BROWSER=xdg-open
+
 
 # ========================================
 # 2. Branch Selection
@@ -75,7 +74,7 @@ RAW_BRANCHES=$(git ls-remote --heads "$REPO_URL" 2>/dev/null || true)
 BRANCHES=()
 if [ -n "$RAW_BRANCHES" ]; then
     # Parse output: remove 'refs/heads/' and sort alphabetically
-    mapfile -t BRANCHES < <(echo "$RAW_BRANCHES" | awk '{print $2}' | sed 's|refs/heads/||' | sort)
+mu    mapfile -t BRANCHES < <(echo "$RAW_BRANCHES" | awk '{print $2}' | sed 's|refs/heads/||' | sort)
 fi
 
 SELECTED_BRANCH=""
