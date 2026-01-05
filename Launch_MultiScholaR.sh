@@ -9,6 +9,8 @@ set -e
 # Configuration
 REPO_URL="https://github.com/APAF-bioinformatics/MultiScholaR.git"
 DEFAULT_BRANCH="main"
+# HARDCODED LOCAL PATH
+LOCAL_PATH="$HOME/Documents/MultiScholaR"
 
 echo "========================================"
 echo "MultiScholaR Launcher"
@@ -31,7 +33,6 @@ if ! command -v Rscript &> /dev/null; then
     read -p "Press Enter to exit..."
     exit 1
 fi
-echo "[OK] R found: $(Rscript --version 2>&1 | head -1)"
 
 # Check for git
 if ! command -v git &> /dev/null; then
@@ -40,50 +41,37 @@ if ! command -v git &> /dev/null; then
     read -p "Press Enter to exit..."
     exit 1
 fi
-echo "[OK] git found: $(git --version | head -1)"
-
-# Check for pandoc (optional)
-if command -v pandoc &> /dev/null; then
-    echo "[OK] pandoc found"
-else
-    echo "[WARN] pandoc not found (reports will fail)"
-fi
-echo ""
 
 # Set up R library path
 export R_LIBS_USER="${HOME}/R/library"
 mkdir -p "$R_LIBS_USER"
-
-# FIX: Tell R to use the system default browser
 export R_BROWSER=xdg-open
 
 # ========================================
-# 2. Branch Selection
+# 2. Branch/Source Selection
 # ========================================
 echo "========================================"
-echo "Branch/Version Selection"
+echo "Source Selection"
 echo "========================================"
 echo ""
 
-echo "Fetching available branches from GitHub..."
-echo ""
-
-# Fetch branches cleanly into an array
-# We use || true to prevent script crash if internet is down
+# Fetch branches cleanly into an array (ignoring errors if offline)
 RAW_BRANCHES=$(git ls-remote --heads "$REPO_URL" 2>/dev/null || true)
 
 BRANCHES=()
 if [ -n "$RAW_BRANCHES" ]; then
-    # Parse output: remove 'refs/heads/' and sort alphabetically
     mapfile -t BRANCHES < <(echo "$RAW_BRANCHES" | awk '{print $2}' | sed 's|refs/heads/||' | sort)
 fi
 
 SELECTED_BRANCH=""
 
+# Display Menu
+echo "Available sources:"
+echo ""
+echo "  L. ** LOCAL DEV ** ($LOCAL_PATH)"
+echo "  --------------------------------------------------"
+
 if [ ${#BRANCHES[@]} -gt 0 ]; then
-    echo "Available branches:"
-    
-    # Loop through array to display menu
     i=0
     for branch in "${BRANCHES[@]}"; do
         i=$((i+1))
@@ -93,66 +81,65 @@ if [ ${#BRANCHES[@]} -gt 0 ]; then
             echo "  $i. $branch"
         fi
     done
-    
-    # Add Custom option
     CUSTOM_OPT=$((i+1))
     echo "  $CUSTOM_OPT. Enter custom branch/tag"
-    echo ""
-    
-    read -p "Select option (1-$CUSTOM_OPT) or press Enter for default: " CHOICE
-    
-    # Logic to handle selection
-    if [ -z "$CHOICE" ]; then
-        SELECTED_BRANCH="$DEFAULT_BRANCH"
-    elif [ "$CHOICE" -eq "$CUSTOM_OPT" ] 2>/dev/null; then
-        read -p "Enter branch/tag name: " USER_INPUT
-        SELECTED_BRANCH="${USER_INPUT:-$DEFAULT_BRANCH}"
-    elif [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le "${#BRANCHES[@]}" ] 2>/dev/null; then
-        # Array index is choice-1
-        IDX=$((CHOICE-1))
-        SELECTED_BRANCH="${BRANCHES[$IDX]}"
-    else
-        # If they typed a name instead of a number, use it
-        SELECTED_BRANCH="$CHOICE"
-    fi
-
 else
-    # FALLBACK if git ls-remote failed (No internet/GitHub down)
-    echo "(!) Could not fetch branches. Using fallback menu."
-    echo ""
-    echo "  1. main (latest development) [DEFAULT]"
-    echo "  2. GUI (GUI development branch)"
-    echo "  3. Enter custom branch/tag"
-    echo ""
-    
-    read -p "Select option (1-3): " CHOICE
-    
-    case "$CHOICE" in
-        1|"") SELECTED_BRANCH="main" ;;
-        2)    SELECTED_BRANCH="GUI" ;;
-        3)    read -p "Enter branch name: " SELECTED_BRANCH ;;
-        *)    SELECTED_BRANCH="$CHOICE" ;;
-    esac
-fi
-
-# Final safety check
-if [ -z "$SELECTED_BRANCH" ]; then
-    SELECTED_BRANCH="$DEFAULT_BRANCH"
+    # Fallback if offline
+    echo "  1. main [DEFAULT]"
+    echo "  2. Enter custom branch"
+    CUSTOM_OPT=2
 fi
 
 echo ""
-echo "Selected branch: $SELECTED_BRANCH"
+read -p "Select option (L, 1-$CUSTOM_OPT) [Default: 1]: " CHOICE
+
+# Logic to handle selection
+if [[ "$CHOICE" == "l" || "$CHOICE" == "L" ]]; then
+    SELECTED_BRANCH="LOCAL"
+elif [ -z "$CHOICE" ]; then
+    SELECTED_BRANCH="$DEFAULT_BRANCH"
+elif [ "$CHOICE" -eq "$CUSTOM_OPT" ] 2>/dev/null; then
+    read -p "Enter branch/tag name: " USER_INPUT
+    SELECTED_BRANCH="${USER_INPUT:-$DEFAULT_BRANCH}"
+elif [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le "${#BRANCHES[@]}" ] 2>/dev/null; then
+    IDX=$((CHOICE-1))
+    SELECTED_BRANCH="${BRANCHES[$IDX]}"
+else
+    # Fallback for manual entry or fallback menu
+    if [ "${#BRANCHES[@]}" -eq 0 ] && [ "$CHOICE" == "1" ]; then
+        SELECTED_BRANCH="main"
+    else
+        SELECTED_BRANCH="$CHOICE"
+    fi
+fi
+
+echo ""
+echo "Selected target: $SELECTED_BRANCH"
 echo ""
 
 # ========================================
 # 3. Launch Application
 # ========================================
-echo "Starting MultiScholaR..."
-echo "This may take a few minutes on first run."
-echo ""
 
-# Execute the R script directly, passing the branch as the first argument
-Rscript launch_multischolar.R "$SELECTED_BRANCH"
+if [ "$SELECTED_BRANCH" == "LOCAL" ]; then
+    # LOCAL MODE: Bypass pak/install and just load_all + run
+    echo "Starting MultiScholaR from LOCAL source..."
+    echo "Path: $LOCAL_PATH"
+    
+    if [ ! -d "$LOCAL_PATH" ]; then
+        echo "[ERROR] Local path does not exist: $LOCAL_PATH"
+        read -p "Press Enter to exit..."
+        exit 1
+    fi
+
+    # NOTE: Adjust 'MultiScholaR::run_app()' below if your start function is named differently
+    Rscript -e "options(browser = 'xdg-open', shiny.launch.browser = TRUE); devtools::load_all('$LOCAL_PATH'); MultiScholaR::run_app(launch.browser = TRUE)"
+
+else
+    # REMOTE MODE: Use the existing R launcher script
+    echo "Starting MultiScholaR (Remote Install)..."
+    Rscript launch_multischolar.R "$SELECTED_BRANCH"
+fi
 
 echo ""
 echo "MultiScholaR session ended."

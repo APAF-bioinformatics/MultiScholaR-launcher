@@ -18,6 +18,11 @@ DEFAULT_BRANCH <- "main"
 
 options(warn = 1)
 
+# Set browser for Linux (xdg-open handles default browser)
+if (.Platform$OS.type == "unix" && Sys.info()["sysname"] != "Darwin") {
+  options(browser = "xdg-open")
+}
+
 message("========================================")
 message("MultiScholaR Launcher")
 message("========================================")
