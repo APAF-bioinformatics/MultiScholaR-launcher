@@ -177,6 +177,21 @@ echo.
 
 set "MULTISCHOLAR_REPO=APAF-bioinformatics/MultiScholaR"
 set "DEFAULT_BRANCH=main"
+set "PERSISTENCE_FILE=%LAUNCHER_DIR%.last_branch"
+
+REM Try to detect remote default branch using git
+for /f "usebackq tokens=*" %%a in (`git ls-remote --symref "https://github.com/APAF-bioinformatics/MultiScholaR.git" HEAD 2^>nul ^| findstr "^ref: refs/heads/"`) do (
+    set "LINE=%%a"
+    set "DEFAULT_BRANCH=!LINE:ref: refs/heads/=!"
+    set "DEFAULT_BRANCH=!DEFAULT_BRANCH:	HEAD=!"
+)
+
+REM Load last selected branch if exists
+set "LAST_SELECTED="
+if exist "%PERSISTENCE_FILE%" (
+    set /p LAST_SELECTED=<"%PERSISTENCE_FILE%"
+)
+
 set "SELECTED_BRANCH="
 
 REM Try to fetch branches from GitHub using PowerShell for reliable parsing
@@ -194,32 +209,39 @@ if !BRANCH_COUNT! gtr 0 (
     echo Available branches:
     echo.
     
+    set "TARGET_DEFAULT=!DEFAULT_BRANCH!"
+    if not "!LAST_SELECTED!"=="" (
+        set "TARGET_DEFAULT=!LAST_SELECTED!"
+    )
+
     REM Display branches with numbers
-    set "IDX=0"
     for /l %%i in (1,1,!BRANCH_COUNT!) do (
-        call set "DISPLAY_BRANCH=%%BRANCH_%%i%%"
-        if "!DISPLAY_BRANCH!"=="main" (
-            echo   %%i. !DISPLAY_BRANCH! [DEFAULT]
-        ) else (
-            echo   %%i. !DISPLAY_BRANCH!
+        call set "BRANCH=%%BRANCH_%%i%%"
+        set "DISPLAY=!BRANCH!"
+        set "INDICATORS="
+        if "!BRANCH!"=="!DEFAULT_BRANCH!" set "INDICATORS=REMOTE DEFAULT"
+        if "!BRANCH!"=="!LAST_SELECTED!" (
+            if "!INDICATORS!"=="" (set "INDICATORS=LAST USED") else (set "INDICATORS=!INDICATORS!, LAST USED")
         )
+        if not "!INDICATORS!"=="" set "DISPLAY=!DISPLAY! [!INDICATORS!]"
+        echo   %%i. !DISPLAY!
     )
     set /a CUSTOM_OPTION=!BRANCH_COUNT!+1
     echo   !CUSTOM_OPTION!. Enter custom branch/tag
     echo.
     
     set "USER_CHOICE="
-    set /p "USER_CHOICE=Select option (1-!CUSTOM_OPTION!) or press Enter for default: "
+    set /p "USER_CHOICE=Select option (1-!CUSTOM_OPTION!) or press Enter for [!TARGET_DEFAULT!]: "
     
     if "!USER_CHOICE!"=="" (
-        set "SELECTED_BRANCH=main"
+        set "SELECTED_BRANCH=!TARGET_DEFAULT!"
         goto :branch_selected
     )
     
     REM Check if user entered the custom option number
     if "!USER_CHOICE!"=="!CUSTOM_OPTION!" (
         set /p "SELECTED_BRANCH=Enter branch/tag name: "
-        if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=main"
+        if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
         goto :branch_selected
     )
     
@@ -243,28 +265,59 @@ REM Fallback menu if git ls-remote failed
 echo.
 echo Available options:
 echo.
-echo   1. main (latest development) [DEFAULT]
-echo   2. GUI (GUI development branch)
-echo   3. Enter custom branch/tag
+
+set "TARGET_DEFAULT=!DEFAULT_BRANCH!"
+if not "!LAST_SELECTED!"=="" (
+    set "TARGET_DEFAULT=!LAST_SELECTED!"
+)
+
+echo   1. !DEFAULT_BRANCH! [REMOTE DEFAULT]
+set "MAX_CHOICE=1"
+
+if not "!LAST_SELECTED!"=="" (
+    if not "!LAST_SELECTED!"=="!DEFAULT_BRANCH!" (
+        echo   2. !LAST_SELECTED! [LAST USED]
+        echo   3. Enter custom branch/tag
+        set "MAX_CHOICE=3"
+    ) else (
+        echo   2. Enter custom branch/tag
+        set "MAX_CHOICE=2"
+    )
+) else (
+    echo   2. Enter custom branch/tag
+    set "MAX_CHOICE=2"
+)
 echo.
 
 set "USER_CHOICE="
-set /p "USER_CHOICE=Select option (1-3) or press Enter for default: "
+set /p "USER_CHOICE=Select option (1-!MAX_CHOICE!) or press Enter for [!TARGET_DEFAULT!]: "
 
 if "!USER_CHOICE!"=="" (
-    set "SELECTED_BRANCH=main"
+    set "SELECTED_BRANCH=!TARGET_DEFAULT!"
 ) else if "!USER_CHOICE!"=="1" (
-    set "SELECTED_BRANCH=main"
+    set "SELECTED_BRANCH=!DEFAULT_BRANCH!"
 ) else if "!USER_CHOICE!"=="2" (
-    set "SELECTED_BRANCH=GUI"
+    if "!MAX_CHOICE!"=="3" (
+        set "SELECTED_BRANCH=!LAST_SELECTED!"
+    ) else (
+        set /p "SELECTED_BRANCH=Enter branch/tag name: "
+        if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
+    )
 ) else if "!USER_CHOICE!"=="3" (
-    set /p "SELECTED_BRANCH=Enter branch/tag name: "
-    if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=main"
+    if "!MAX_CHOICE!"=="3" (
+        set /p "SELECTED_BRANCH=Enter branch/tag name: "
+        if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
+    ) else (
+        set "SELECTED_BRANCH=!USER_CHOICE!"
+    )
 ) else (
     set "SELECTED_BRANCH=!USER_CHOICE!"
 )
 
 :branch_selected
+
+REM Save selection for next time
+echo !SELECTED_BRANCH!>"%PERSISTENCE_FILE%"
 
 echo.
 echo Selected branch: !SELECTED_BRANCH!
