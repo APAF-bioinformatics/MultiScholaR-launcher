@@ -110,6 +110,11 @@ Select option (1-4) or press Enter for default:
 - **Press 3** → GUI-specific development branch
 - **Press 4** → Enter any branch, tag, or commit hash
 
+### Automatic Persistence
+To make things faster, the launcher **remembers your last selection**. If you've run the launcher before, your last choice will be marked as `[LAST USED]` and will be the default option when you press Enter.
+
+**To reset your selection**: Simply delete the hidden `.last_branch` file in the launcher directory. This will cause the launcher to re-detect the remote default branch.
+
 ### First Run vs Subsequent Runs
 
 | | First Run | Subsequent Runs |
@@ -128,6 +133,7 @@ Select option (1-4) or press Enter for default:
 | `Launch_MultiScholaR.sh` | Linux launcher (double-click or `./Launch_MultiScholaR.sh`) |
 | `launch_multischolar.R` | Core R script - handles installation & launch |
 | `MultiScholaR.ico` | Icon for Windows shortcuts |
+| `.last_branch` | (Auto-generated) Remembers your last version selection |
 | `README.md` | This file |
 
 ## Troubleshooting
