@@ -9,6 +9,16 @@ echo.
 REM Get the directory where this batch file is located
 set "LAUNCHER_DIR=%~dp0"
 
+REM Check for flags
+set "LOCAL_FLAG="
+:parse_args
+if "%~1"=="" goto :args_done
+if "%~1"=="--local" set "LOCAL_FLAG=--local"
+shift
+goto :parse_args
+:args_done
+rem Need to shift back if we want to use positionals later, but here we just need the flag
+
 REM ========================================
 REM Check Prerequisites
 REM ========================================
@@ -337,7 +347,7 @@ echo Do not close this window.
 echo.
 
 REM Run the R launch script with selected branch as argument
-"!RSCRIPT_PATH!" "%LAUNCHER_DIR%launch_multischolar.R" "!SELECTED_BRANCH!"
+"!RSCRIPT_PATH!" "%LAUNCHER_DIR%launch_multischolar.R" "!SELECTED_BRANCH!" "%LOCAL_FLAG%"
 set RSCRIPT_EXIT=!ERRORLEVEL!
 
 echo.

@@ -38,18 +38,58 @@ message("")
 
 ## Determine the branch to use
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) > 0) {
-  selected_branch <- args[1]
-  message("Using branch from arguments: ", selected_branch)
-} else {
-  # This part should ideally not be reached if the shell scripts are working correctly
-  # but we provide a default just in case
+is_local <- "--local" %in% args
+
+# Filter out flags to find the branch
+selected_branch <- args[!grepl("^-", args)][1]
+
+if (is.null(selected_branch) || is.na(selected_branch)) {
   selected_branch <- "main"
-  message("No branch provided via arguments. Using default: ", selected_branch)
 }
 
-MULTISCHOLAR_REF <- paste0(MULTISCHOLAR_REPO, "@", selected_branch)
-message("Selected: ", selected_branch)
+# Helper to get the directory of the current script
+get_script_dir <- function() {
+  # Check if run via Rscript
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    return(dirname(normalizePath(sub("--file=", "", file_arg))))
+  }
+  
+  # Check if sourced
+  if (!is.null(sys.frames()[[1]]$ofile)) {
+    return(dirname(normalizePath(sys.frames()[[1]]$ofile)))
+  }
+  
+  # Fallback to current directory
+  return(getwd())
+}
+
+if (is_local) {
+  message("Local installation mode enabled (--local)")
+  config_file <- file.path(get_script_dir(), "launcher_config.json")
+  
+  if (file.exists(config_file)) {
+    message("Reading config from: ", config_file)
+    config_lines <- readLines(config_file, warn = FALSE)
+    path_line <- grep("local_repo_path", config_lines, value = TRUE)
+    local_path <- gsub('.*"local_repo_path"\\s*:\\s*"([^"]+)".*', "\\1", path_line)
+    
+    if (nchar(local_path) > 0 && dir.exists(local_path)) {
+      MULTISCHOLAR_REF <- paste0("local::", local_path)
+      message("Using local repository path: ", local_path)
+    } else {
+      message("WARNING: Local repository path not found or invalid. Falling back to remote.")
+      MULTISCHOLAR_REF <- paste0(MULTISCHOLAR_REPO, "@", selected_branch)
+    }
+  } else {
+    message("WARNING: launcher_config.json not found at ", config_file, ". Falling back to remote.")
+    MULTISCHOLAR_REF <- paste0(MULTISCHOLAR_REPO, "@", selected_branch)
+  }
+} else {
+  MULTISCHOLAR_REF <- paste0(MULTISCHOLAR_REPO, "@", selected_branch)
+  message("Selected branch: ", selected_branch)
+}
 message("")
 
 # ========================================

@@ -12,6 +12,14 @@ echo ""
 # Get the directory where this script is located
 LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Check for flags
+LOCAL_FLAG=""
+for arg in "$@"; do
+    if [ "$arg" == "--local" ]; then
+        LOCAL_FLAG="--local"
+    fi
+done
+
 # ========================================
 # Check Prerequisites
 # ========================================
@@ -207,7 +215,7 @@ echo "Do not close this window."
 echo ""
 
 # Run the R launch script
-"$RSCRIPT_PATH" "$LAUNCHER_DIR/launch_multischolar.R" "$SELECTED_BRANCH"
+"$RSCRIPT_PATH" "$LAUNCHER_DIR/launch_multischolar.R" "$SELECTED_BRANCH" "$LOCAL_FLAG"
 RSCRIPT_EXIT=$?
 
 echo ""

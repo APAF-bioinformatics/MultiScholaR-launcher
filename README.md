@@ -206,7 +206,21 @@ This is normal on first run! It installs many Bioconductor packages:
 
 ## For Developers
 
-### Testing Different Branches
+### Local Installation (for Developers)
+
+If you have a local clone of the MultiScholaR repository and want to install from there instead of GitHub, you can use the `--local` flag.
+
+1. Create a `launcher_config.json` file in the same directory as the launcher:
+   ```json
+   {
+       "local_repo_path": "/path/to/your/local/MultiScholaR"
+   }
+   ```
+2. Run the launcher with the `--local` flag:
+   - **Windows**: `Launch_MultiScholaR.bat --local`
+   - **macOS/Linux**: `./Launch_MultiScholaR.command --local`
+
+The launcher will then use `pak` to install the package from your local directory, which is much faster than fetching from remote for development cycles.
 
 ```bash
 # Pass branch as command-line argument
