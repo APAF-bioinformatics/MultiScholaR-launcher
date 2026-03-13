@@ -180,154 +180,158 @@ echo.
 REM ========================================
 REM Branch Selection
 REM ========================================
-echo ========================================
-echo Branch/Version Selection
-echo ========================================
-echo.
-
-set "MULTISCHOLAR_REPO=APAF-bioinformatics/MultiScholaR"
-set "DEFAULT_BRANCH=main"
-set "PERSISTENCE_FILE=%LAUNCHER_DIR%.last_branch"
-
-REM Try to detect remote default branch using git
-for /f "usebackq tokens=*" %%a in (`git ls-remote --symref "https://github.com/APAF-bioinformatics/MultiScholaR.git" HEAD 2^>nul ^| findstr "^ref: refs/heads/"`) do (
-    set "LINE=%%a"
-    set "DEFAULT_BRANCH=!LINE:ref: refs/heads/=!"
-    set "DEFAULT_BRANCH=!DEFAULT_BRANCH:	HEAD=!"
-)
-
-REM Load last selected branch if exists
-set "LAST_SELECTED="
-if exist "%PERSISTENCE_FILE%" (
-    set /p LAST_SELECTED=<"%PERSISTENCE_FILE%"
-)
-
-set "SELECTED_BRANCH="
-
-REM Try to fetch branches from GitHub using PowerShell for reliable parsing
-echo Fetching available branches...
-set "BRANCH_COUNT=0"
-
-REM Use PowerShell to get and parse branch names
-for /f "usebackq tokens=*" %%a in (`powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; git ls-remote --heads 'https://github.com/APAF-bioinformatics/MultiScholaR.git' 2>$null | ForEach-Object { ($_ -split '\t')[1] -replace 'refs/heads/','' }"`) do (
-    set /a BRANCH_COUNT+=1
-    set "BRANCH_!BRANCH_COUNT!=%%a"
-)
-
-if !BRANCH_COUNT! gtr 0 (
+if "%LOCAL_FLAG%"=="" (
+    echo ========================================
+    echo Branch/Version Selection
+    echo ========================================
     echo.
-    echo Available branches:
+
+    set "MULTISCHOLAR_REPO=APAF-bioinformatics/MultiScholaR"
+    set "DEFAULT_BRANCH=main"
+    set "PERSISTENCE_FILE=%LAUNCHER_DIR%.last_branch"
+
+    REM Try to detect remote default branch using git
+    for /f "usebackq tokens=*" %%a in (`git ls-remote --symref "https://github.com/APAF-bioinformatics/MultiScholaR.git" HEAD 2^>nul ^| findstr "^ref: refs/heads/"`) do (
+        set "LINE=%%a"
+        set "DEFAULT_BRANCH=!LINE:ref: refs/heads/=!"
+        set "DEFAULT_BRANCH=!DEFAULT_BRANCH:	HEAD=!"
+    )
+
+    REM Load last selected branch if exists
+    set "LAST_SELECTED="
+    if exist "%PERSISTENCE_FILE%" (
+        set /p LAST_SELECTED=<"%PERSISTENCE_FILE%"
+    )
+
+    set "SELECTED_BRANCH="
+
+    REM Try to fetch branches from GitHub using PowerShell for reliable parsing
+    echo Fetching available branches...
+    set "BRANCH_COUNT=0"
+
+    REM Use PowerShell to get and parse branch names
+    for /f "usebackq tokens=*" %%a in (`powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; git ls-remote --heads 'https://github.com/APAF-bioinformatics/MultiScholaR.git' 2>$null | ForEach-Object { ($_ -split '\t')[1] -replace 'refs/heads/','' }"`) do (
+        set /a BRANCH_COUNT+=1
+        set "BRANCH_!BRANCH_COUNT!=%%a"
+    )
+
+    if !BRANCH_COUNT! gtr 0 (
+        echo.
+        echo Available branches:
+        echo.
+        
+        set "TARGET_DEFAULT=!DEFAULT_BRANCH!"
+        if not "!LAST_SELECTED!"=="" (
+            set "TARGET_DEFAULT=!LAST_SELECTED!"
+        )
+
+        REM Display branches with numbers
+        for /l %%i in (1,1,!BRANCH_COUNT!) do (
+            call set "BRANCH=%%BRANCH_%%i%%"
+            set "DISPLAY=!BRANCH!"
+            set "INDICATORS="
+            if "!BRANCH!"=="!DEFAULT_BRANCH!" set "INDICATORS=REMOTE DEFAULT"
+            if "!BRANCH!"=="!LAST_SELECTED!" (
+                if "!INDICATORS!"=="" (set "INDICATORS=LAST USED") else (set "INDICATORS=!INDICATORS!, LAST USED")
+            )
+            if not "!INDICATORS!"=="" set "DISPLAY=!DISPLAY! [!INDICATORS!]"
+            echo   %%i. !DISPLAY!
+        )
+        set /a CUSTOM_OPTION=!BRANCH_COUNT!+1
+        echo   !CUSTOM_OPTION!. Enter custom branch/tag
+        echo.
+        
+        set "USER_CHOICE="
+        set /p "USER_CHOICE=Select option (1-!CUSTOM_OPTION!) or press Enter for [!TARGET_DEFAULT!]: "
+        
+        if "!USER_CHOICE!"=="" (
+            set "SELECTED_BRANCH=!TARGET_DEFAULT!"
+            goto :branch_selected
+        )
+        
+        REM Check if user entered the custom option number
+        if "!USER_CHOICE!"=="!CUSTOM_OPTION!" (
+            set /p "SELECTED_BRANCH=Enter branch/tag name: "
+            if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
+            goto :branch_selected
+        )
+        
+        REM Check if it's a valid branch number
+        set "FOUND_BRANCH=0"
+        for /l %%i in (1,1,!BRANCH_COUNT!) do (
+            if "!USER_CHOICE!"=="%%i" (
+                call set "SELECTED_BRANCH=%%BRANCH_%%i%%"
+                set "FOUND_BRANCH=1"
+            )
+        )
+        
+        if "!FOUND_BRANCH!"=="0" (
+            REM Treat input as direct branch name
+            set "SELECTED_BRANCH=!USER_CHOICE!"
+        )
+        goto :branch_selected
+    )
+
+    REM Fallback menu if git ls-remote failed
     echo.
-    
+    echo Available options:
+    echo.
+
     set "TARGET_DEFAULT=!DEFAULT_BRANCH!"
     if not "!LAST_SELECTED!"=="" (
         set "TARGET_DEFAULT=!LAST_SELECTED!"
     )
 
-    REM Display branches with numbers
-    for /l %%i in (1,1,!BRANCH_COUNT!) do (
-        call set "BRANCH=%%BRANCH_%%i%%"
-        set "DISPLAY=!BRANCH!"
-        set "INDICATORS="
-        if "!BRANCH!"=="!DEFAULT_BRANCH!" set "INDICATORS=REMOTE DEFAULT"
-        if "!BRANCH!"=="!LAST_SELECTED!" (
-            if "!INDICATORS!"=="" (set "INDICATORS=LAST USED") else (set "INDICATORS=!INDICATORS!, LAST USED")
+    echo   1. !DEFAULT_BRANCH! [REMOTE DEFAULT]
+    set "MAX_CHOICE=1"
+
+    if not "!LAST_SELECTED!"=="" (
+        if not "!LAST_SELECTED!"=="!DEFAULT_BRANCH!" (
+            echo   2. !LAST_SELECTED! [LAST USED]
+            echo   3. Enter custom branch/tag
+            set "MAX_CHOICE=3"
+        ) else (
+            echo   2. Enter custom branch/tag
+            set "MAX_CHOICE=2"
         )
-        if not "!INDICATORS!"=="" set "DISPLAY=!DISPLAY! [!INDICATORS!]"
-        echo   %%i. !DISPLAY!
-    )
-    set /a CUSTOM_OPTION=!BRANCH_COUNT!+1
-    echo   !CUSTOM_OPTION!. Enter custom branch/tag
-    echo.
-    
-    set "USER_CHOICE="
-    set /p "USER_CHOICE=Select option (1-!CUSTOM_OPTION!) or press Enter for [!TARGET_DEFAULT!]: "
-    
-    if "!USER_CHOICE!"=="" (
-        set "SELECTED_BRANCH=!TARGET_DEFAULT!"
-        goto :branch_selected
-    )
-    
-    REM Check if user entered the custom option number
-    if "!USER_CHOICE!"=="!CUSTOM_OPTION!" (
-        set /p "SELECTED_BRANCH=Enter branch/tag name: "
-        if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
-        goto :branch_selected
-    )
-    
-    REM Check if it's a valid branch number
-    set "FOUND_BRANCH=0"
-    for /l %%i in (1,1,!BRANCH_COUNT!) do (
-        if "!USER_CHOICE!"=="%%i" (
-            call set "SELECTED_BRANCH=%%BRANCH_%%i%%"
-            set "FOUND_BRANCH=1"
-        )
-    )
-    
-    if "!FOUND_BRANCH!"=="0" (
-        REM Treat input as direct branch name
-        set "SELECTED_BRANCH=!USER_CHOICE!"
-    )
-    goto :branch_selected
-)
-
-REM Fallback menu if git ls-remote failed
-echo.
-echo Available options:
-echo.
-
-set "TARGET_DEFAULT=!DEFAULT_BRANCH!"
-if not "!LAST_SELECTED!"=="" (
-    set "TARGET_DEFAULT=!LAST_SELECTED!"
-)
-
-echo   1. !DEFAULT_BRANCH! [REMOTE DEFAULT]
-set "MAX_CHOICE=1"
-
-if not "!LAST_SELECTED!"=="" (
-    if not "!LAST_SELECTED!"=="!DEFAULT_BRANCH!" (
-        echo   2. !LAST_SELECTED! [LAST USED]
-        echo   3. Enter custom branch/tag
-        set "MAX_CHOICE=3"
     ) else (
         echo   2. Enter custom branch/tag
         set "MAX_CHOICE=2"
     )
-) else (
-    echo   2. Enter custom branch/tag
-    set "MAX_CHOICE=2"
-)
-echo.
+    echo.
 
-set "USER_CHOICE="
-set /p "USER_CHOICE=Select option (1-!MAX_CHOICE!) or press Enter for [!TARGET_DEFAULT!]: "
+    set "USER_CHOICE="
+    set /p "USER_CHOICE=Select option (1-!MAX_CHOICE!) or press Enter for [!TARGET_DEFAULT!]: "
 
-if "!USER_CHOICE!"=="" (
-    set "SELECTED_BRANCH=!TARGET_DEFAULT!"
-) else if "!USER_CHOICE!"=="1" (
-    set "SELECTED_BRANCH=!DEFAULT_BRANCH!"
-) else if "!USER_CHOICE!"=="2" (
-    if "!MAX_CHOICE!"=="3" (
-        set "SELECTED_BRANCH=!LAST_SELECTED!"
-    ) else (
-        set /p "SELECTED_BRANCH=Enter branch/tag name: "
-        if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
-    )
-) else if "!USER_CHOICE!"=="3" (
-    if "!MAX_CHOICE!"=="3" (
-        set /p "SELECTED_BRANCH=Enter branch/tag name: "
-        if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
+    if "!USER_CHOICE!"=="" (
+        set "SELECTED_BRANCH=!TARGET_DEFAULT!"
+    ) else if "!USER_CHOICE!"=="1" (
+        set "SELECTED_BRANCH=!DEFAULT_BRANCH!"
+    ) else if "!USER_CHOICE!"=="2" (
+        if "!MAX_CHOICE!"=="3" (
+            set "SELECTED_BRANCH=!LAST_SELECTED!"
+        ) else (
+            set /p "SELECTED_BRANCH=Enter branch/tag name: "
+            if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
+        )
+    ) else if "!USER_CHOICE!"=="3" (
+        if "!MAX_CHOICE!"=="3" (
+            set /p "SELECTED_BRANCH=Enter branch/tag name: "
+            if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
+        ) else (
+            set "SELECTED_BRANCH=!USER_CHOICE!"
+        )
     ) else (
         set "SELECTED_BRANCH=!USER_CHOICE!"
     )
+
+    :branch_selected
+    REM Save selection for next time
+    echo !SELECTED_BRANCH!>"%PERSISTENCE_FILE%"
 ) else (
-    set "SELECTED_BRANCH=!USER_CHOICE!"
+    REM Local mode - skip branch selection
+    set "SELECTED_BRANCH=local_mode"
 )
-
-:branch_selected
-
-REM Save selection for next time
-echo !SELECTED_BRANCH!>"%PERSISTENCE_FILE%"
 
 echo.
 echo Selected branch: !SELECTED_BRANCH!
