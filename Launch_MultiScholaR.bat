@@ -325,14 +325,18 @@ if "%LOCAL_FLAG%"=="" (
         set "SELECTED_BRANCH=!USER_CHOICE!"
     )
 
-    :branch_selected
-    REM Save selection for next time
-    echo !SELECTED_BRANCH!>"%PERSISTENCE_FILE%"
+    goto :save_branch_selection
 ) else (
     REM Local mode - skip branch selection
     set "SELECTED_BRANCH=local_mode"
+    goto :launch_multischolar
 )
 
+:save_branch_selection
+REM Save selection for next time
+echo !SELECTED_BRANCH!>"%PERSISTENCE_FILE%"
+
+:launch_multischolar
 echo.
 echo Selected branch: !SELECTED_BRANCH!
 echo.
