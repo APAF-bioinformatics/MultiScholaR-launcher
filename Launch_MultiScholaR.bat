@@ -246,14 +246,14 @@ if "%LOCAL_FLAG%"=="" (
         
         if "!USER_CHOICE!"=="" (
             set "SELECTED_BRANCH=!TARGET_DEFAULT!"
-            goto :branch_selected
+            goto :save_branch_selection
         )
         
         REM Check if user entered the custom option number
         if "!USER_CHOICE!"=="!CUSTOM_OPTION!" (
             set /p "SELECTED_BRANCH=Enter branch/tag name: "
             if "!SELECTED_BRANCH!"=="" set "SELECTED_BRANCH=!TARGET_DEFAULT!"
-            goto :branch_selected
+            goto :save_branch_selection
         )
         
         REM Check if it's a valid branch number
@@ -269,7 +269,7 @@ if "%LOCAL_FLAG%"=="" (
             REM Treat input as direct branch name
             set "SELECTED_BRANCH=!USER_CHOICE!"
         )
-        goto :branch_selected
+        goto :save_branch_selection
     )
 
     REM Fallback menu if git ls-remote failed
